@@ -332,6 +332,13 @@ class ApplicationController {
         callback(granted);
       }
     );
+
+    session.defaultSession.setPermissionCheckHandler(
+      (webContents, permission) => {
+        const allowedPermissions = ["microphone", "camera", "display-capture"];
+        return allowedPermissions.includes(permission);
+      }
+    );
   }
 
   setupGlobalShortcuts() {
