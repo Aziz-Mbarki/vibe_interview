@@ -48,7 +48,7 @@ class WindowManager {
         width: 500,
         height: 700,
         file: 'chat.html',
-        title: 'Chat'
+        title: 'OpenCluely Chat (TEST WINDOW)'
       },
       llmResponse: {
         width: 840,
@@ -111,12 +111,15 @@ class WindowManager {
     logger.info('Initializing application windows', { showMainWindow });
     
     try {
-      // Pass autoShow so the main window doesn't flash visible during
-      // first-run onboarding before the user has configured API keys.
-      await this.createMainWindow({ autoShow: showMainWindow });
+      // Pass autoShow: false so all windows are created and bound-positioned before showing
+      await this.createMainWindow({ autoShow: false });
       await this.createChatWindow();
       await this.createLLMResponseWindow();
       await this.createSettingsWindow();
+
+      if (this.bindWindows) {
+        this.positionBoundWindows();
+      }
       
       this.setupWindowEventHandlers();
       this.setupScreenTracking();
@@ -143,6 +146,11 @@ class WindowManager {
   async showMainWindow() {
     const mainWindow = this.windows.get('main');
     if (!mainWindow) return;
+
+    if (this.bindWindows) {
+      this.positionBoundWindows();
+    }
+    this.isVisible = true;
     
     // Immediate always-on-top enforcement for main window
     if (process.platform === 'darwin') {
@@ -230,8 +238,15 @@ class WindowManager {
     if (this.windows.has('chat')) {
       return this.windows.get('chat');
     }
-    const window = await this.createWindow('chat');
+    logger.info('[WINDOW] Creating chat window (diagnostic visible configuration)');
+    const window = await this.createWindow('chat', false);
     this.windows.set('chat', window);
+
+    window.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      logger.info(`[CHAT-CONSOLE] ${message} (line: ${line})`);
+    });
+
+    // Start hidden so that show / switchToWindow tests have a clean hidden -> show transition
     window.hide();
     return window;
   }
@@ -391,28 +406,25 @@ class WindowManager {
         level: process.platform === 'darwin' ? 'floating' : undefined,
       };
     } else if (type === 'chat') {
-      // Chat window - frameless without window controls
+      // Diagnostic Chat Window: standard visible Electron window requested by user
       browserWindowOptions = {
         ...baseOptions,
-        minWidth: config.get('window.minWidth'),
-        minHeight: config.get('window.minHeight'),
-        maxWidth: config.get('window.maxWidth'),
-        maxHeight: config.get('window.maxHeight'),
-        frame: false,
-        titleBarStyle: 'hidden',
-        transparent: true,
+        width: 500,
+        height: 700,
+        show: true,
+        frame: true,
+        transparent: false,
+        skipTaskbar: false,
+        alwaysOnTop: true,
+        backgroundColor: '#1e1e1e',
+        title: 'OpenCluely Chat (TEST WINDOW)',
+        titleBarStyle: 'default',
         resizable: true,
-        minimizable: false,
-        maximizable: false,
-        closable: false,
+        minimizable: true,
+        maximizable: true,
+        closable: true,
         hasShadow: true,
-        ...(process.platform === 'darwin' && {
-          titleBarStyle: 'hiddenInset',
-          trafficLightPosition: { x: -100, y: -100 },
-          type: 'panel',
-          acceptFirstMouse: true
-        }),
-        level: process.platform === 'darwin' ? 'floating' : undefined,
+        thickFrame: true
       };
     } else {
       // Other windows (skills)
@@ -449,6 +461,23 @@ class WindowManager {
 
   const window = new BrowserWindow(browserWindowOptions);
     
+  // Attach diagnostic webContents listeners before loadFile
+  window.webContents.on('did-finish-load', () => {
+    logger.info(`[${type.toUpperCase()}-WEBCONTENTS] did-finish-load successfully fired for: ${windowConfig.file}`);
+  });
+  window.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL) => {
+    logger.error(`[${type.toUpperCase()}-WEBCONTENTS] did-fail-load: ${errorDescription} (${errorCode}) for URL: ${validatedURL}`);
+  });
+  window.webContents.on('render-process-gone', (event, details) => {
+    logger.error(`[${type.toUpperCase()}-WEBCONTENTS] render-process-gone:`, details);
+  });
+  window.webContents.on('unresponsive', () => {
+    logger.error(`[${type.toUpperCase()}-WEBCONTENTS] Window became unresponsive`);
+  });
+  window.webContents.on('responsive', () => {
+    logger.info(`[${type.toUpperCase()}-WEBCONTENTS] Window became responsive`);
+  });
+
   // Load the HTML file
     await window.loadFile(windowConfig.file);
     
@@ -606,14 +635,18 @@ class WindowManager {
     // Ensure window appears on all workspaces/desktops initially
     window.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
     
-    // Hide from taskbar to maintain stealth
-    window.setSkipTaskbar(true);
+    // Hide from taskbar to maintain stealth (disabled for chat diagnostic test window)
+    if (type !== 'chat') {
+      window.setSkipTaskbar(true);
+    }
     
-    // Make window undetectable by screen capture (if supported)
-    try {
-      window.setContentProtection(true);
-    } catch (error) {
-      logger.debug('Content protection not supported on this platform');
+    // Make window undetectable by screen capture (disabled for chat diagnostic test window)
+    if (type !== 'chat') {
+      try {
+        window.setContentProtection(true);
+      } catch (error) {
+        logger.debug('Content protection not supported on this platform');
+      }
     }
     
     // More aggressive event listeners to maintain always-on-top behavior
@@ -846,28 +879,81 @@ class WindowManager {
       }, 50);
     } else {
       // Linux/Windows
-      win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      logger.info('[STEP-LOG] START showOnCurrentDesktop (Linux/Windows)', {
+        id: win.id,
+        boundsBefore: win.getBounds(),
+        isVisibleBefore: win.isVisible()
+      });
+
+      logger.info('[STEP-LOG] BEFORE win.setVisibleOnAllWorkspaces(true)');
+      try {
+        win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+      } catch (e) {
+        logger.warn('[STEP-LOG] setVisibleOnAllWorkspaces error:', e.message);
+      }
+      logger.info('[STEP-LOG] AFTER win.setVisibleOnAllWorkspaces(true)');
+
+      logger.info('[STEP-LOG] BEFORE win.setAlwaysOnTop(true)');
       win.setAlwaysOnTop(true);
+      logger.info('[STEP-LOG] AFTER win.setAlwaysOnTop(true)', { isAlwaysOnTop: win.isAlwaysOnTop() });
+
+      logger.info('[STEP-LOG] BEFORE win.show()', { isVisible: win.isVisible() });
       win.show();
+      logger.info('[STEP-LOG] AFTER win.show()', { isVisible: win.isVisible() });
+
+      logger.info('[STEP-LOG] BEFORE win.focus()', { isFocused: win.isFocused() });
       win.focus();
+      logger.info('[STEP-LOG] AFTER win.focus()', { isFocused: win.isFocused() });
+
+      // Step 8: Verify bounds and visible monitor
+      const postShowBounds = win.getBounds();
+      const allDisplays = screen.getAllDisplays();
+      const primaryDisplay = screen.getPrimaryDisplay();
+      const containingDisplay = allDisplays.find(d => {
+        const db = d.bounds;
+        return (
+          postShowBounds.x < db.x + db.width &&
+          postShowBounds.x + postShowBounds.width > db.x &&
+          postShowBounds.y < db.y + db.height &&
+          postShowBounds.y + postShowBounds.height > db.y
+        );
+      });
+
+      logger.info('[STEP-LOG] WINDOW MONITOR & BOUNDS VERIFICATION:', {
+        boundsAfterShow: postShowBounds,
+        primaryDisplayBounds: primaryDisplay.bounds,
+        primaryDisplayWorkArea: primaryDisplay.workArea,
+        totalDisplays: allDisplays.length,
+        isOnVisibleMonitor: !!containingDisplay,
+        containingDisplayId: containingDisplay ? containingDisplay.id : 'NONE',
+        containingDisplayBounds: containingDisplay ? containingDisplay.bounds : null
+      });
+
       setTimeout(() => {
-        if (win.isDestroyed()) return;
-        if (!isLLM) {
-          win.setVisibleOnAllWorkspaces(false);
+        if (!win.isDestroyed()) {
+          win.setAlwaysOnTop(true);
         }
-        win.setAlwaysOnTop(true);
       }, 500);
     }
 
-    logger.debug('Showing window on current desktop with enhanced always-on-top', {
+    logger.info('[STEP-LOG] COMPLETED showOnCurrentDesktop', {
       platform: process.platform,
       windowId: win.id,
-      isDestroyed: win.isDestroyed()
+      isDestroyed: win.isDestroyed(),
+      isVisible: win.isVisible(),
+      bounds: win.getBounds()
     });
   }
   
   setupWindowEventHandlers() {
     this.windows.forEach((window, type) => {
+      window.webContents.on('did-finish-load', () => {
+        logger.info(`[WEB-CONTENTS] "${type}" window loaded content`);
+      });
+      window.webContents.on('dom-ready', () => {
+        logger.info(`[WEB-CONTENTS] "${type}" window DOM ready`);
+      });
+
       window.on('closed', () => {
         logger.debug('Window closed', { type });
         this.windows.delete(type);
@@ -906,9 +992,9 @@ class WindowManager {
   }
 
   setupScreenCaptureAvailabilityWatcher() {
-    // Avoid screencast portal errors on Linux/Wayland by disabling periodic detection
-    if (process.platform === 'linux') {
-      logger.info('Skipping screen capture availability watcher on Linux to avoid portal screencast errors');
+    // Avoid screencast portal errors on Linux and thread desktop errors on Windows
+    if (process.platform === 'linux' || process.platform === 'win32') {
+      logger.info('Skipping screen capture availability watcher on Linux/Windows to avoid desktop thread errors');
       return;
     }
 
@@ -1008,7 +1094,19 @@ class WindowManager {
   }
 
   switchToWindow(windowType) {
-    if (this.windows.has('chat') && this.windows.get('chat').isVisible()) {
+    const chatWin = this.windows.get('chat');
+    logger.info(`[WINDOW] switchToWindow entered for type: "${windowType}"`, {
+      windowType,
+      'this.windows.has("chat")': this.windows.has('chat'),
+      'this.windows.get("chat") exists': !!chatWin,
+      'isDestroyed()': chatWin ? chatWin.isDestroyed() : 'N/A',
+      'isVisible()': chatWin && !chatWin.isDestroyed() ? chatWin.isVisible() : 'N/A',
+      'bounds': chatWin && !chatWin.isDestroyed() ? chatWin.getBounds() : 'N/A',
+      'isScreenBeingShared': this.isScreenBeingShared
+    });
+
+    if (this.windows.has('chat') && this.windows.get('chat').isVisible() && windowType === 'chat') {
+      logger.info(`[WINDOW] chat window is currently visible, hiding it for toggle test`);
       this.hideChatWindow();
       return;
     }
@@ -1019,20 +1117,63 @@ class WindowManager {
     }
 
     if (this.isScreenBeingShared) {
+      logger.warn('[WINDOW] Screen is being shared, skipping switchToWindow');
       return;
     }
 
     const targetWindow = this.windows.get(windowType);
     if (targetWindow) {
+      logger.info(`[WINDOW] targetWindow "${windowType}" found. Bounds before show:`, targetWindow.getBounds());
+      logger.info(`[STEP-LOG] BEFORE calling showOnCurrentDesktop("${windowType}")`);
       this.showOnCurrentDesktop(targetWindow);
+      logger.info(`[STEP-LOG] AFTER calling showOnCurrentDesktop("${windowType}")`);
 
       this.activeWindow = windowType;
       
-      logger.info('Switched to window', {
+      logger.info('Switched to window successfully', {
         windowType,
-        isVisible: this.isVisible
+        isVisible: this.isVisible,
+        targetBounds: targetWindow.getBounds(),
+        targetIsVisible: targetWindow.isVisible(),
+        targetIsAlwaysOnTop: targetWindow.isAlwaysOnTop()
       });
+    } else {
+      logger.error(`[WINDOW] targetWindow "${windowType}" not found in this.windows!`);
     }
+  }
+
+  // Step 5: Temporary test that completely bypasses existing window-management logic
+  testDirectChatShow() {
+    const chatWindow = this.windows.get('chat');
+    if (!chatWindow || chatWindow.isDestroyed()) {
+      logger.error('[BYPASS-TEST] chatWindow does not exist or is destroyed!');
+      return;
+    }
+    logger.info('[BYPASS-TEST] Step 5: Starting Direct chatWindow show/focus/setAlwaysOnTop test');
+    logger.info('[BYPASS-TEST] BEFORE chatWindow.show()', { isVisible: chatWindow.isVisible(), bounds: chatWindow.getBounds() });
+    chatWindow.show();
+    logger.info('[BYPASS-TEST] AFTER chatWindow.show()', { isVisible: chatWindow.isVisible(), bounds: chatWindow.getBounds() });
+
+    logger.info('[BYPASS-TEST] BEFORE chatWindow.focus()', { isFocused: chatWindow.isFocused() });
+    chatWindow.focus();
+    logger.info('[BYPASS-TEST] AFTER chatWindow.focus()', { isFocused: chatWindow.isFocused() });
+
+    logger.info('[BYPASS-TEST] BEFORE chatWindow.setAlwaysOnTop(true)', { isAlwaysOnTop: chatWindow.isAlwaysOnTop() });
+    chatWindow.setAlwaysOnTop(true);
+    logger.info('[BYPASS-TEST] AFTER chatWindow.setAlwaysOnTop(true)', { isAlwaysOnTop: chatWindow.isAlwaysOnTop() });
+  }
+
+  // Step 6: Temporary test for chatWindow.showInactive()
+  testChatShowInactive() {
+    const chatWindow = this.windows.get('chat');
+    if (!chatWindow || chatWindow.isDestroyed()) {
+      logger.error('[BYPASS-TEST] chatWindow does not exist or is destroyed for showInactive!');
+      return;
+    }
+    logger.info('[BYPASS-TEST] Step 6: Starting Direct chatWindow.showInactive() test');
+    logger.info('[BYPASS-TEST] BEFORE chatWindow.showInactive()', { isVisible: chatWindow.isVisible(), bounds: chatWindow.getBounds() });
+    chatWindow.showInactive();
+    logger.info('[BYPASS-TEST] AFTER chatWindow.showInactive()', { isVisible: chatWindow.isVisible(), bounds: chatWindow.getBounds() });
   }
 
   showAllWindows() {
@@ -1529,9 +1670,18 @@ class WindowManager {
   }
 
   setupScreenTracking() {
-    // Initialize with current cursor position to get the active display
-    const cursorPoint = screen.getCursorScreenPoint();
-    this.currentDisplay = screen.getDisplayNearestPoint(cursorPoint);
+    // Initialize with current cursor position or fallback safely to primary display
+    let cursorPoint = null;
+    try {
+      cursorPoint = screen.getCursorScreenPoint();
+      if (cursorPoint && typeof cursorPoint.x === 'number' && Math.abs(cursorPoint.x) < 50000 && Math.abs(cursorPoint.y) < 50000) {
+        this.currentDisplay = screen.getDisplayNearestPoint(cursorPoint);
+      } else {
+        this.currentDisplay = screen.getPrimaryDisplay();
+      }
+    } catch (_) {
+      this.currentDisplay = screen.getPrimaryDisplay();
+    }
     
     screen.on('display-added', () => {
       logger.debug('Display added');
@@ -1571,10 +1721,18 @@ class WindowManager {
   trackActiveScreen() {
     if (this.isScreenBeingShared) return;
 
-    const cursorPoint = screen.getCursorScreenPoint();
+    let cursorPoint = null;
+    try {
+      cursorPoint = screen.getCursorScreenPoint();
+      if (!cursorPoint || typeof cursorPoint.x !== 'number' || Math.abs(cursorPoint.x) > 50000 || Math.abs(cursorPoint.y) > 50000) {
+        return;
+      }
+    } catch (_) {
+      return;
+    }
     const activeDisplay = screen.getDisplayNearestPoint(cursorPoint);
     
-    if (!this.currentDisplay || activeDisplay.id !== this.currentDisplay.id) {
+    if (!this.currentDisplay || (activeDisplay && activeDisplay.id !== this.currentDisplay.id)) {
       this.currentDisplay = activeDisplay;
       this.moveWindowsToActiveScreen();
       

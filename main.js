@@ -336,16 +336,44 @@ class ApplicationController {
 
   setupGlobalShortcuts() {
     const shortcuts = {
-      "CommandOrControl+Shift+S": () => this.triggerScreenshotOCR(),
-      "CommandOrControl+Shift+V": () => windowManager.toggleVisibility(),
-      "CommandOrControl+Shift+I": () => windowManager.toggleInteraction(),
-      "CommandOrControl+Shift+C": () => windowManager.switchToWindow("chat"),
-      "CommandOrControl+Shift+\\": () => this.clearSessionMemory(),
-      "CommandOrControl+,": () => windowManager.showSettings(),
-      "Alt+A": () => windowManager.toggleInteraction(),
-      "Alt+R": () => this.toggleSpeechRecognition(),
-      "CommandOrControl+Shift+T": () => windowManager.forceAlwaysOnTopForAllWindows(),
+      "CommandOrControl+Shift+S": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+S (Screenshot)");
+        this.triggerScreenshotOCR();
+      },
+      "CommandOrControl+Shift+V": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+V (Toggle Visibility)");
+        windowManager.toggleVisibility();
+      },
+      "CommandOrControl+Shift+I": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+I (Toggle Interaction)");
+        windowManager.toggleInteraction();
+      },
+      "CommandOrControl+Shift+C": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+C (Switch To Chat)");
+        windowManager.switchToWindow("chat");
+      },
+      "CommandOrControl+Shift+\\": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+\\ (Clear Memory)");
+        this.clearSessionMemory();
+      },
+      "CommandOrControl+,": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+, (Settings)");
+        windowManager.showSettings();
+      },
+      "Alt+A": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+A (Toggle Interaction)");
+        windowManager.toggleInteraction();
+      },
+      "Alt+R": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+R (Toggle Speech)");
+        this.toggleSpeechRecognition();
+      },
+      "CommandOrControl+Shift+T": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+T (Force Always On Top)");
+        windowManager.forceAlwaysOnTopForAllWindows();
+      },
       "CommandOrControl+Shift+Alt+T": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+Alt+T (Test Always On Top)");
         const results = windowManager.testAlwaysOnTopForAllWindows();
         logger.info('Always-on-top test triggered via shortcut', results);
       },
@@ -358,7 +386,8 @@ class ApplicationController {
 
     Object.entries(shortcuts).forEach(([accelerator, handler]) => {
       const success = globalShortcut.register(accelerator, handler);
-      logger.debug("Global shortcut registered", { accelerator, success });
+      const isRegistered = globalShortcut.isRegistered(accelerator);
+      logger.info("Global shortcut registered", { accelerator, success, isRegistered });
     });
   }
 
@@ -1462,7 +1491,10 @@ class ApplicationController {
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
 
-      speechProvider: speechService.provider || "whisper",
+      speechProvider: speechService.provider || (process.env.SPEECH_PROVIDER || "whisper"),
+      groqApiKey: process.env.GROQ_API_KEY || "",
+      groqModel: process.env.GROQ_STT_MODEL || "whisper-large-v3-turbo",
+      groqLanguage: process.env.GROQ_LANGUAGE || "auto",
       azureKey: process.env.AZURE_SPEECH_KEY || "",
       azureRegion: process.env.AZURE_SPEECH_REGION || "",
       whisperCommand: process.env.WHISPER_COMMAND || "",
@@ -1472,6 +1504,7 @@ class ApplicationController {
       geminiKey: process.env.GEMINI_API_KEY || "",
 
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
+      groqConfigured: !!process.env.GROQ_API_KEY,
       speechAvailable: this.speechAvailable
     };
   }
@@ -1508,8 +1541,17 @@ class ApplicationController {
       // Writing to .env ensures they survive app restarts and are picked
       // up the next time the app boots.
       const envUpdates = {};
-      if (settings.speechProvider === "azure" || settings.speechProvider === "whisper") {
+      if (settings.speechProvider === "azure" || settings.speechProvider === "whisper" || settings.speechProvider === "groq") {
         envUpdates.SPEECH_PROVIDER = settings.speechProvider;
+      }
+      if (settings.groqApiKey !== undefined) {
+        envUpdates.GROQ_API_KEY = settings.groqApiKey;
+      }
+      if (settings.groqModel !== undefined) {
+        envUpdates.GROQ_STT_MODEL = settings.groqModel;
+      }
+      if (settings.groqLanguage !== undefined) {
+        envUpdates.GROQ_LANGUAGE = settings.groqLanguage;
       }
       if (settings.azureKey !== undefined) {
         envUpdates.AZURE_SPEECH_KEY = settings.azureKey;
@@ -1557,18 +1599,14 @@ class ApplicationController {
         }
       }
 
-      // Reinitialize speech service when provider OR whisper command
-      // changes. Without the second check, the install flow (which
-      // writes a new whisperCommand after install but keeps the same
-      // provider) would leave the speech service pointing at a stale
-      // (or non-existent) binary, and the main overlay's mic button
-      // would stay hidden / non-functional.
+      // Reinitialize speech service when provider, whisper command, or Groq settings change.
       const providerChanged = settings.speechProvider && speechService.provider !== settings.speechProvider;
       const whisperCommandChanged = settings.whisperCommand !== undefined &&
         prevWhisperCommand !== String(settings.whisperCommand || '');
-      if (providerChanged || whisperCommandChanged) {
+      const groqChanged = settings.groqApiKey !== undefined || settings.groqModel !== undefined || settings.groqLanguage !== undefined;
+      if (providerChanged || whisperCommandChanged || groqChanged) {
         try {
-          speechService.initializeClient();
+          speechService.updateSettings(settings);
           this.speechAvailable = speechService.isAvailable
             ? speechService.isAvailable()
             : false;
@@ -1584,6 +1622,7 @@ class ApplicationController {
           logger.info('Speech service reinitialized after settings change', {
             providerChanged,
             whisperCommandChanged,
+            groqChanged,
             speechAvailable: this.speechAvailable,
           });
         } catch (e) {

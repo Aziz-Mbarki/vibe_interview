@@ -355,12 +355,47 @@
                     <div class="settings-item">
                         <div>
                             <div class="settings-item-label">Speech Provider</div>
-                            <div class="settings-item-description">Choose Azure Speech or a local OpenAI Whisper CLI</div>
+                            <div class="settings-item-description">Choose Groq Cloud (ultra fast & free), local Whisper, or Azure Speech</div>
                         </div>
                         <select class="input-field" id="speechProvider">
-                            <option value="azure">Azure Speech</option>
+                            <option value="groq">Groq Whisper (Cloud - Fast & Free)</option>
                             <option value="whisper">Local Whisper</option>
+                            <option value="azure">Azure Speech</option>
+                            <option value="nvidia" disabled>NVIDIA ASR (Coming Soon)</option>
                         </select>
+                    </div>
+
+                    <!-- Groq fields (shown only when Groq is selected) -->
+                    <div id="groqFields" class="settings-group">
+                        <div class="settings-item">
+                            <div class="settings-stack">
+                                <div>
+                                    <div class="settings-item-label">Groq API Key</div>
+                                    <div class="settings-item-description">Your free Groq API key from <code>console.groq.com/keys</code></div>
+                                </div>
+                                <input type="password" class="input-field" id="groqApiKey" placeholder="gsk_..." style="max-width: 100%;">
+                            </div>
+                        </div>
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Groq Model</div>
+                                <div class="settings-item-description">Turbo is ultra fast (~200ms); Large V3 provides maximum multilingual accuracy</div>
+                            </div>
+                            <select class="input-field" id="groqModel">
+                                <option value="whisper-large-v3-turbo">whisper-large-v3-turbo (Ultra Fast)</option>
+                                <option value="whisper-large-v3">whisper-large-v3 (Maximum Accuracy)</option>
+                            </select>
+                        </div>
+                        <div class="settings-item">
+                            <div>
+                                <div class="settings-item-label">Language</div>
+                                <div class="settings-item-description">Spoken language code (e.g. en, fr, ar) or auto</div>
+                            </div>
+                            <input type="text" class="input-field" id="groqLanguage" placeholder="auto">
+                        </div>
+                        <div class="settings-note">
+                            Groq Whisper processes audio in the cloud on LPUs in ~200ms with zero CPU burden on your computer. Includes 2,000 free requests per day.
+                        </div>
                     </div>
 
                     <!-- Azure fields (shown only when Azure is selected) -->

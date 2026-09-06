@@ -6,3 +6,5 @@ eng.traineddata
 dist/
 .DS_Store
 *.log
+scratch/
+

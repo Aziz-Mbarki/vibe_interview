@@ -351,9 +351,15 @@ if (typeof window === 'undefined') {
   global.navigator = global.window.navigator;
   global.AudioContext = global.window.AudioContext;
   global.webkitAudioContext = global.window.webkitAudioContext;
-  global.URL = global.window.URL;
-  global.Blob = global.window.Blob;
-  global.File = global.window.File;
+  if (!global.URL) {
+    global.URL = global.window.URL;
+  }
+  if (!global.Blob) {
+    global.Blob = global.window.Blob;
+  }
+  if (!global.File) {
+    global.File = global.window.File;
+  }
 
   if (!global.performance) {
     global.performance = {
@@ -384,6 +390,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, spawnSync } = require('child_process');
 const { EventEmitter } = require('events');
+const { Blob: NativeBlob, File: NativeFile } = require('buffer');
 const logger = require('../core/logger').createServiceLogger('SPEECH');
 const config = require('../core/config');
 
@@ -438,6 +445,11 @@ class SpeechService extends EventEmitter {
     const provider = this._getConfiguredProvider();
     this.provider = provider;
 
+    if (provider === 'groq') {
+      this._initializeGroqClient();
+      return;
+    }
+
     if (provider === 'azure') {
       this._initializeAzureClient();
       return;
@@ -448,9 +460,45 @@ class SpeechService extends EventEmitter {
       return;
     }
 
-    const reason = 'Speech recognition disabled. Configure Azure or local Whisper.';
+    if (provider === 'nvidia') {
+      const reason = 'NVIDIA ASR provider is a placeholder (coming soon).';
+      logger.info(reason);
+      this.available = false;
+      this.emit('status', reason);
+      return;
+    }
+
+    const reason = 'Speech recognition disabled. Configure Groq, Whisper, or Azure.';
     logger.warn(reason);
     this.emit('status', reason);
+  }
+
+  _initializeGroqClient() {
+    try {
+      const apiKey = this._getGroqApiKey();
+      if (!apiKey) {
+        const reason = 'Groq API key not found. Configure GROQ_API_KEY in Settings or .env.';
+        logger.warn('Speech service disabled (missing Groq API key)');
+        this.emit('status', reason);
+        return;
+      }
+
+      this.available = true;
+      const model = this._getGroqModel();
+      const language = this._getGroqLanguage();
+      logger.info('Groq Speech service initialized successfully', {
+        model,
+        language
+      });
+      this.emit('status', `Groq Whisper ready (${model})`);
+    } catch (error) {
+      logger.error('Failed to initialize Groq Speech client', {
+        error: error.message,
+        stack: error.stack
+      });
+      this.available = false;
+      this.emit('status', 'Groq speech unavailable');
+    }
   }
 
   _initializeAzureClient() {
@@ -550,6 +598,11 @@ class SpeechService extends EventEmitter {
       this.sessionStartTime = Date.now();
       this.retryCount = 0;
 
+      if (this.provider === 'groq') {
+        this._startGroqRecording();
+        return;
+      }
+
       if (this.provider === 'azure') {
         this._startAzureRecording();
         return;
@@ -565,6 +618,35 @@ class SpeechService extends EventEmitter {
       logger.error('Critical error in startRecording', { error: error.message, stack: error.stack });
       this.emit('error', `Speech recognition failed to start: ${error.message}`);
       this.isRecording = false;
+    }
+  }
+
+  _startGroqRecording() {
+    this._cleanup();
+    this.isRecording = true;
+    this.segmentBuffers = [];
+    this.segmentBytes = 0;
+    this.transcriptionInFlight = false;
+    this.pendingFlush = false;
+    this._resetVadState();
+    this.emit('recording-started');
+    this.emit('status', 'Groq Whisper recording started');
+
+    this.useRendererCapture = process.platform === 'win32' || process.platform === 'darwin';
+    if (this.useRendererCapture) {
+      this.emit('status', 'Waiting for microphone audio…');
+      this._startSegmentWatchdog();
+      if (global.windowManager) {
+        global.windowManager.handleRecordingStarted();
+      }
+      return;
+    }
+
+    this._startMicrophoneCapture();
+    this._startSegmentWatchdog();
+
+    if (global.windowManager) {
+      global.windowManager.handleRecordingStarted();
     }
   }
 
@@ -733,7 +815,7 @@ class SpeechService extends EventEmitter {
       clearInterval(this.segmentTimer);
     }
     this.segmentTimer = setInterval(() => {
-      if (!this.isRecording || this.provider !== 'whisper') {
+      if (!this.isRecording || (this.provider !== 'whisper' && this.provider !== 'groq')) {
         return;
       }
 
@@ -762,7 +844,7 @@ class SpeechService extends EventEmitter {
    * the current Whisper segment buffer.
    */
   handleAudioChunkFromRenderer(chunk) {
-    if (!this.isRecording || this.provider !== 'whisper' || !this.useRendererCapture) {
+    if (!this.isRecording || (this.provider !== 'whisper' && this.provider !== 'groq') || !this.useRendererCapture) {
       return;
     }
     if (!chunk || !chunk.length) {
@@ -891,9 +973,15 @@ class SpeechService extends EventEmitter {
     this.vadSilenceMs = 0;
     this.vadPreRoll = [];
     this.vadPreRollMs = 0;
-    this._flushWhisperSegment({ final: false }).catch((error) => {
-      logger.error('Whisper segment transcription failed', { error: error.message });
-    });
+    if (this.provider === 'groq') {
+      this._flushGroqSegment({ final: false }).catch((error) => {
+        logger.error('Groq segment transcription failed', { error: error.message });
+      });
+    } else {
+      this._flushWhisperSegment({ final: false }).catch((error) => {
+        logger.error('Whisper segment transcription failed', { error: error.message });
+      });
+    }
   }
 
   _chunkDurationMs(buffer) {
@@ -931,12 +1019,164 @@ class SpeechService extends EventEmitter {
       return;
     }
 
+    if (this.provider === 'groq') {
+      this._finalizeGroqStop();
+      return;
+    }
+
     if (this.provider === 'whisper') {
       this._finalizeWhisperStop();
       return;
     }
 
     this._finalizeStop('Recording stopped');
+  }
+
+  async _finalizeGroqStop() {
+    if (this.segmentTimer) {
+      clearInterval(this.segmentTimer);
+      this.segmentTimer = null;
+    }
+
+    if (this.recording) {
+      try {
+        this.recording.stop();
+      } catch (error) {
+        logger.error('Error stopping audio recording', { error: error.message });
+      }
+      this.recording = null;
+    }
+
+    try {
+      await this._flushGroqSegment({ final: true });
+    } catch (error) {
+      logger.error('Final Groq transcription failed', { error: error.message });
+      this.emit('error', `Groq transcription failed: ${error.message}`);
+    } finally {
+      this._finalizeStop('Recording stopped');
+    }
+  }
+
+  async _flushGroqSegment({ final }) {
+    if (this.transcriptionInFlight) {
+      this.pendingFlush = this.pendingFlush || final;
+      return;
+    }
+
+    if (!this.segmentBytes) {
+      return;
+    }
+
+    const audioBuffer = Buffer.concat(this.segmentBuffers, this.segmentBytes);
+    this.segmentBuffers = [];
+    this.segmentBytes = 0;
+
+    this.transcriptionInFlight = true;
+
+    try {
+      const transcript = await this._transcribeGroqBuffer(audioBuffer);
+      const clean = transcript ? transcript.trim() : '';
+      if (clean && !this._isHallucinatedTranscript(clean)) {
+        this.emit('transcription', clean);
+      } else if (clean) {
+        logger.debug('Dropped likely Groq silence hallucination', { transcript: clean });
+      }
+    } catch (error) {
+      logger.error('Groq transcription error', { error: error.message });
+      this.emit('error', `Groq transcription failed: ${error.message}`);
+    } finally {
+      this.transcriptionInFlight = false;
+
+      if (this.pendingFlush) {
+        const shouldRunFinal = this.pendingFlush;
+        this.pendingFlush = false;
+        await this._flushGroqSegment({ final: shouldRunFinal });
+      }
+    }
+  }
+
+  async _transcribeGroqBuffer(audioBuffer) {
+    const apiKey = this._getGroqApiKey();
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY is not configured');
+    }
+
+    const wavBuffer = this._createWavBuffer(audioBuffer);
+    return this._postGroqAudio(wavBuffer, 'audio.wav');
+  }
+
+  async _transcribeGroqFile(audioFilePath) {
+    const apiKey = this._getGroqApiKey();
+    if (!apiKey) {
+      throw new Error('GROQ_API_KEY is not configured');
+    }
+
+    if (!fs.existsSync(audioFilePath)) {
+      throw new Error(`Audio file not found: ${audioFilePath}`);
+    }
+
+    const fileBuffer = fs.readFileSync(audioFilePath);
+    const filename = path.basename(audioFilePath);
+    return this._postGroqAudio(fileBuffer, filename);
+  }
+
+  async _postGroqAudio(fileBuffer, filename) {
+    const apiKey = this._getGroqApiKey();
+    const model = this._getGroqModel();
+    const language = this._getGroqLanguage();
+
+    const blob = new NativeBlob([fileBuffer], { type: 'audio/wav' });
+    const formData = new FormData();
+    formData.append('file', blob, filename || 'audio.wav');
+    formData.append('model', model);
+    formData.append('response_format', 'json');
+    formData.append('temperature', '0');
+
+    if (language && language !== 'auto') {
+      formData.append('language', language);
+    }
+
+    const startTime = Date.now();
+    const response = await fetch('https://api.groq.com/openai/v1/audio/transcriptions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'User-Agent': 'OpenCluely-Desktop'
+      },
+      body: formData
+    });
+
+    const duration = Date.now() - startTime;
+
+    if (!response.ok) {
+      let errorMessage = `HTTP ${response.status} ${response.statusText}`;
+      try {
+        const errorJson = await response.json();
+        if (errorJson && errorJson.error && errorJson.error.message) {
+          errorMessage = errorJson.error.message;
+        }
+      } catch (_) {
+        try {
+          const errorText = await response.text();
+          if (errorText) errorMessage = errorText;
+        } catch (_) {}
+      }
+      logger.error('Groq transcription API error', {
+        status: response.status,
+        error: errorMessage,
+        duration: `${duration}ms`
+      });
+      throw new Error(`Groq API Error (${response.status}): ${errorMessage}`);
+    }
+
+    const data = await response.json();
+    logger.info('Groq transcription completed', {
+      duration: `${duration}ms`,
+      model,
+      textLength: data.text ? data.text.length : 0
+    });
+
+    return (data && typeof data.text === 'string') ? data.text.trim() : '';
   }
 
   async _finalizeWhisperStop() {
@@ -1028,6 +1268,41 @@ class SpeechService extends EventEmitter {
     this.useRendererCapture = false;
   }
 
+  /**
+   * Universal Speech-to-Text interface. Accepts an audio file path (string) or raw audio Buffer.
+   * Dispatches to the currently active provider (groq, whisper, azure).
+   * 
+   * @param {string|Buffer} audio - File path or audio Buffer
+   * @param {Object} [options] - Options (e.g. { normalized: true })
+   * @returns {Promise<string|Object>} Transcribed text or normalized result { text, provider, model }
+   */
+  async transcribe(audio, options = {}) {
+    let text = '';
+    if (typeof audio === 'string') {
+      text = await this.recognizeFromFile(audio);
+    } else if (Buffer.isBuffer(audio)) {
+      if (this.provider === 'groq') {
+        text = await this._transcribeGroqBuffer(audio);
+      } else if (this.provider === 'whisper') {
+        text = await this._transcribeWhisperBuffer(audio);
+      } else {
+        throw new Error(`Buffer transcription is not supported for provider "${this.provider}"`);
+      }
+    } else {
+      throw new Error('transcribe() expects an audio file path (string) or an audio Buffer');
+    }
+
+    const cleanText = (text || '').trim();
+    if (options && options.normalized) {
+      return {
+        text: cleanText,
+        provider: this.provider,
+        model: this.provider === 'groq' ? this._getGroqModel() : (this.provider === 'whisper' ? this._getWhisperModel() : 'azure')
+      };
+    }
+    return cleanText;
+  }
+
   async recognizeFromFile(audioFilePath) {
     if (this.provider === 'azure') {
       if (!this.speechConfig) {
@@ -1061,10 +1336,18 @@ class SpeechService extends EventEmitter {
       return this._transcribeWhisperFile(audioFilePath);
     }
 
+    if (this.provider === 'groq') {
+      return this._transcribeGroqFile(audioFilePath);
+    }
+
     throw new Error('Speech service not initialized');
   }
 
   async testConnection() {
+    if (this.provider === 'groq') {
+      return this._testGroqConnection();
+    }
+
     if (this.provider === 'azure') {
       if (!this.speechConfig) {
         throw new Error('Speech service not initialized');
@@ -1107,15 +1390,54 @@ class SpeechService extends EventEmitter {
     return { success: false, message: 'Speech service not initialized' };
   }
 
+  async _testGroqConnection() {
+    const apiKey = this._getGroqApiKey();
+    if (!apiKey) {
+      return { success: false, message: 'Groq API key not configured' };
+    }
+
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/models', {
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'User-Agent': 'OpenCluely-Desktop'
+        }
+      });
+
+      if (!response.ok) {
+        let errDetail = `HTTP ${response.status}`;
+        try {
+          const errData = await response.json();
+          if (errData && errData.error && errData.error.message) {
+            errDetail = errData.error.message;
+          }
+        } catch (_) {}
+        return { success: false, message: `Groq connection failed: ${errDetail}` };
+      }
+
+      return {
+        success: true,
+        message: `Groq connection verified successfully (${this._getGroqModel()})`
+      };
+    } catch (error) {
+      return { success: false, message: `Groq connection error: ${error.message}` };
+    }
+  }
+
   getStatus() {
     return {
       provider: this.provider,
       isRecording: this.isRecording,
-      isInitialized: this.provider === 'azure' ? !!this.speechConfig : !!this.whisperCommand,
+      isInitialized: this.provider === 'azure'
+        ? !!this.speechConfig
+        : (this.provider === 'groq' ? (!!this._getGroqApiKey() && this.available) : !!this.whisperCommand),
       sessionDuration: this.sessionStartTime ? Date.now() - this.sessionStartTime : 0,
       retryCount: this.retryCount,
       effectiveSettings: {
         speechProvider: this.provider,
+        groqApiKey: this._getGroqApiKey() ? '***' : '',
+        groqModel: this._getGroqModel(),
+        groqLanguage: this._getGroqLanguage(),
         azureKey: this._getSetting('azureKey') || '',
         azureRegion: this._getSetting('azureRegion') || process.env.AZURE_SPEECH_REGION || '',
         whisperCommand: this._getSetting('whisperCommand') || process.env.WHISPER_COMMAND || '',
@@ -1127,12 +1449,20 @@ class SpeechService extends EventEmitter {
       config: {
         azure: config.get('speech.azure') || {},
         whisper: config.get('speech.whisper') || {},
+        groq: {
+          model: this._getGroqModel(),
+          language: this._getGroqLanguage()
+        },
         selectedProvider: this.provider
       }
     };
   }
 
   isAvailable() {
+    if (this.provider === 'groq') {
+      return !!this._getGroqApiKey() && !!this.available;
+    }
+
     if (this.provider === 'azure') {
       return !!this.speechConfig && !!this.available;
     }
@@ -1145,7 +1475,19 @@ class SpeechService extends EventEmitter {
   }
 
   updateSettings(settings = {}) {
-    const speechKeys = ['speechProvider', 'azureKey', 'azureRegion', 'whisperCommand', 'whisperModelDir', 'whisperModel', 'whisperLanguage', 'whisperSegmentMs'];
+    const speechKeys = [
+      'speechProvider',
+      'groqApiKey',
+      'groqModel',
+      'groqLanguage',
+      'azureKey',
+      'azureRegion',
+      'whisperCommand',
+      'whisperModelDir',
+      'whisperModel',
+      'whisperLanguage',
+      'whisperSegmentMs'
+    ];
     let changed = false;
 
     for (const key of speechKeys) {
@@ -1163,10 +1505,23 @@ class SpeechService extends EventEmitter {
   }
 
   _getConfiguredProvider() {
-    const provider = String(this._getSetting('speechProvider') || process.env.SPEECH_PROVIDER || '').trim().toLowerCase();
+    let provider = String(this._getSetting('speechProvider') || process.env.SPEECH_PROVIDER || '').trim().toLowerCase();
 
-    if (provider === 'azure' || provider === 'whisper') {
+    if (provider === 'local-whisper') {
+      provider = 'whisper';
+    }
+
+    if (provider === 'groq' || provider === 'azure' || provider === 'whisper') {
       return provider;
+    }
+
+    if (provider === 'nvidia') {
+      return 'nvidia';
+    }
+
+    const hasGroq = !!(this._getSetting('groqApiKey') || process.env.GROQ_API_KEY);
+    if (hasGroq) {
+      return 'groq';
     }
 
     const hasAzure = !!((this._getSetting('azureKey') || process.env.AZURE_SPEECH_KEY) &&
@@ -1177,6 +1532,18 @@ class SpeechService extends EventEmitter {
     }
 
     return 'whisper';
+  }
+
+  _getGroqApiKey() {
+    return this._getSetting('groqApiKey') || process.env.GROQ_API_KEY || '';
+  }
+
+  _getGroqModel() {
+    return this._getSetting('groqModel') || process.env.GROQ_STT_MODEL || 'whisper-large-v3-turbo';
+  }
+
+  _getGroqLanguage() {
+    return this._getSetting('groqLanguage') || process.env.GROQ_LANGUAGE || 'auto';
   }
 
   _getWhisperModel() {
@@ -1652,7 +2019,7 @@ class SpeechService extends EventEmitter {
       return;
     }
 
-    if (this.provider === 'whisper') {
+    if (this.provider === 'whisper' || this.provider === 'groq') {
       this._ingestWhisperAudio(Buffer.from(chunk));
     }
   }

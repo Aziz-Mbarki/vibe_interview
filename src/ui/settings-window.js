@@ -7,6 +7,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const closeButton = document.getElementById('closeButton');
     const quitButton = document.getElementById('quitButton');
     const speechProviderSelect = document.getElementById('speechProvider');
+    const groqApiKeyInput = document.getElementById('groqApiKey');
+    const groqModelSelect = document.getElementById('groqModel');
+    const groqLanguageInput = document.getElementById('groqLanguage');
     const azureKeyInput = document.getElementById('azureKey');
     const azureRegionInput = document.getElementById('azureRegion');
     const whisperCommandInput = document.getElementById('whisperCommand');
@@ -75,6 +78,9 @@ document.addEventListener('DOMContentLoaded', () => {
         // Always set the input value, even if empty, so the user sees what's
         // currently configured (including env-derived defaults). Previously
         // empty strings were skipped which left stale UI values.
+        if (groqApiKeyInput) groqApiKeyInput.value = settings.groqApiKey || '';
+        if (groqModelSelect) groqModelSelect.value = settings.groqModel || 'whisper-large-v3-turbo';
+        if (groqLanguageInput) groqLanguageInput.value = settings.groqLanguage || 'auto';
         if (azureKeyInput) azureKeyInput.value = settings.azureKey || '';
         if (azureRegionInput) azureRegionInput.value = settings.azureRegion || '';
         if (whisperCommandInput) whisperCommandInput.value = settings.whisperCommand || '';
@@ -131,6 +137,9 @@ document.addEventListener('DOMContentLoaded', () => {
     const saveSettings = () => {
         const settings = {};
         if (speechProviderSelect) settings.speechProvider = speechProviderSelect.value;
+        if (groqApiKeyInput) settings.groqApiKey = groqApiKeyInput.value;
+        if (groqModelSelect) settings.groqModel = groqModelSelect.value;
+        if (groqLanguageInput) settings.groqLanguage = groqLanguageInput.value;
         if (azureKeyInput) settings.azureKey = azureKeyInput.value;
         if (azureRegionInput) settings.azureRegion = azureRegionInput.value;
         if (whisperCommandInput) settings.whisperCommand = whisperCommandInput.value;
@@ -146,15 +155,19 @@ document.addEventListener('DOMContentLoaded', () => {
     };
 
     const updateSpeechFieldStates = () => {
-        const provider = speechProviderSelect ? speechProviderSelect.value : 'azure';
+        const provider = speechProviderSelect ? speechProviderSelect.value : 'groq';
 
         // Show/hide provider-specific field groups instead of just disabling
         // them. This keeps the settings UI clean — only the relevant fields
         // for the selected provider are visible.
+        const groqGroup = document.getElementById('groqFields');
         const azureGroup = document.getElementById('azureFields');
         const whisperGroup = document.getElementById('whisperFields');
         const azureNote = document.getElementById('azureFieldsNote');
 
+        if (groqGroup) {
+            groqGroup.style.display = provider === 'groq' ? '' : 'none';
+        }
         if (azureGroup) {
             azureGroup.style.display = provider === 'azure' ? '' : 'none';
         }
@@ -166,6 +179,9 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         // Also toggle disabled attribute for any leftover direct field refs
+        [groqApiKeyInput, groqModelSelect, groqLanguageInput].forEach(input => {
+            if (input) input.disabled = provider !== 'groq';
+        });
         [azureKeyInput, azureRegionInput].forEach(input => {
             if (input) input.disabled = provider !== 'azure';
         });
@@ -177,6 +193,9 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add event listeners for all inputs
     const inputs = [
         speechProviderSelect,
+        groqApiKeyInput,
+        groqModelSelect,
+        groqLanguageInput,
         azureKeyInput,
         azureRegionInput,
         whisperCommandInput,
