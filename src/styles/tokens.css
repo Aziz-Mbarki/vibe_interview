@@ -1,0 +1,90 @@
+/* OpenCluely design tokens — single source of truth for the overlay UI.
+   Import FIRST in src/styles/common.css:  @import url('./tokens.css'); */
+
+:root,
+:root[data-theme="dark"] {
+  /* Fonts */
+  --font: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* Surfaces (translucent, sit on top of whatever is behind the overlay) */
+  --surface-hud: linear-gradient(135deg, rgba(18,18,20,.62) 0%, rgba(10,10,12,.55) 100%);
+  --surface-1: rgba(14, 14, 16, 0.62);
+  --surface-2: rgba(255, 255, 255, 0.045);
+  --surface-3: rgba(255, 255, 255, 0.085);
+
+  /* Borders */
+  --border-0: rgba(255, 255, 255, 0.06);
+  --border-1: rgba(255, 255, 255, 0.12);
+  --border-2: rgba(255, 255, 255, 0.20);
+
+  /* Text */
+  --text-0: rgba(255, 255, 255, 0.98);
+  --text-1: rgba(255, 255, 255, 0.86);
+  --text-2: rgba(255, 255, 255, 0.62);
+  --text-3: rgba(255, 255, 255, 0.42);
+
+  /* Accents */
+  --accent: #22c55e;
+  --info: #60a5fa;
+  --warn: #f59e0b;
+  --danger: #ef4444;
+
+  /* Effects */
+  --blur-hud: blur(18px) saturate(140%);
+  --blur-panel: blur(24px) saturate(140%);
+  --shadow-hud: 0 8px 30px rgba(0, 0, 0, 0.45);
+  --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.50);
+  --shadow-1: 0 1px 2px rgba(0, 0, 0, 0.35);
+
+  /* Radii */
+  --r-panel: 16px;
+  --r-card: 12px;
+  --r-pill: 999px;
+
+  /* Motion */
+  --t: 120ms cubic-bezier(.2, .8, .2, 1);
+  --t-slow: 180ms cubic-bezier(.2, .8, .2, 1);
+}
+
+:root[data-theme="light"] {
+  --surface-hud: linear-gradient(135deg, rgba(255,255,255,.78) 0%, rgba(245,245,247,.70) 100%);
+  --surface-1: rgba(250, 250, 252, 0.72);
+  --surface-2: rgba(0, 0, 0, 0.035);
+  --surface-3: rgba(0, 0, 0, 0.075);
+  --border-0: rgba(0, 0, 0, 0.06);
+  --border-1: rgba(0, 0, 0, 0.12);
+  --border-2: rgba(0, 0, 0, 0.20);
+  --text-0: rgba(10, 10, 12, 0.98);
+  --text-1: rgba(10, 10, 12, 0.84);
+  --text-2: rgba(10, 10, 12, 0.60);
+  --text-3: rgba(10, 10, 12, 0.42);
+  --shadow-hud: 0 8px 30px rgba(0, 0, 0, 0.18);
+  --shadow-panel: 0 18px 50px rgba(0, 0, 0, 0.20);
+}
+
+/* Blackout mode (max readability over any background) — Cmd/Ctrl+Shift+B */
+html.blackout {
+  --surface-1: rgba(0, 0, 0, 0.94);
+  --surface-hud: rgba(0, 0, 0, 0.94);
+  --surface-2: rgba(255, 255, 255, 0.05);
+  --blur-panel: blur(4px);
+  --blur-hud: blur(4px);
+}
+
+/* Linux: transparency + blur is unreliable across compositors — go opaque. */
+@media (prefers-reduced-transparency: reduce) {
+  :root { --surface-1: rgba(12,12,14,.97); --surface-hud: rgba(12,12,14,.97);
+          --blur-panel: none; --blur-hud: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root { --t: 1ms; --t-slow: 1ms; }
+}
+
+/* Shared focus ring — never remove it. */
+:where(button, a, input, select, textarea, [tabindex]):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
