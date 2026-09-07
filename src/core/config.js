@@ -102,6 +102,17 @@ class ConfigManager {
         hideFromDock: true,
         noAttachConsole: true,
         disguiseProcess: true
+      },
+
+      router: {
+        twoPass: false,
+        minConfidence: 0.55
+      },
+
+      interview: {
+        preset: process.env.INTERVIEW_PRESET || 'full',
+        defaultStyle: 'concise',
+        activeSkill: 'auto'
       }
     };
   }

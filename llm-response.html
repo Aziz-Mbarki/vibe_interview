@@ -375,15 +375,134 @@
             color: #fff;
         }
         
-        /* Push content below header */
+        /* Push content below header & action bar */
         .has-header #response-content,
         .has-header #loading {
-            margin-top: 32px;
+            margin-top: 60px;
         }
         .has-header .split-layout,
         .has-header .full-content,
         .has-header .loading {
-            height: calc(100vh - 32px);
+            height: calc(100vh - 60px);
+        }
+
+        /* Skill badge button in header */
+        .skill-badge-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.16);
+            border-radius: 12px;
+            padding: 2px 8px;
+            font-size: 11px;
+            font-weight: 600;
+            color: #f3f4f6;
+            cursor: pointer;
+            -webkit-app-region: no-drag;
+            transition: all 0.15s ease;
+            user-select: none;
+        }
+        .skill-badge-btn:hover {
+            background: rgba(255, 255, 255, 0.16);
+            border-color: rgba(255, 255, 255, 0.3);
+        }
+        .conf-dot {
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background-color: #10b981;
+            display: inline-block;
+        }
+        .conf-dot.green { background-color: #10b981; }
+        .conf-dot.amber { background-color: #f59e0b; }
+        .conf-dot.red { background-color: #ef4444; }
+
+        /* Action bar container */
+        .action-bar-container {
+            position: absolute;
+            top: 32px;
+            left: 0;
+            right: 0;
+            height: 28px;
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            padding: 0 10px;
+            background: rgba(15, 15, 20, 0.85);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            overflow-x: auto;
+            white-space: nowrap;
+            z-index: 45;
+            scrollbar-width: none;
+            -webkit-app-region: no-drag;
+            box-sizing: border-box;
+        }
+        .action-bar-container::-webkit-scrollbar { display: none; }
+        .action-chip {
+            background: rgba(255, 255, 255, 0.07);
+            border: 1px solid rgba(255, 255, 255, 0.12);
+            color: #e5e7eb;
+            font-size: 10.5px;
+            padding: 2px 7px;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.15s ease, border-color 0.15s ease;
+            user-select: none;
+        }
+        .action-chip:hover {
+            background: rgba(255, 255, 255, 0.18);
+            border-color: rgba(255, 255, 255, 0.3);
+            color: #ffffff;
+        }
+        .action-chip.active {
+            background: rgba(59, 130, 246, 0.3);
+            border-color: rgba(59, 130, 246, 0.6);
+        }
+
+        /* Re-run dropdown menu */
+        .rerun-menu {
+            position: absolute;
+            top: 34px;
+            left: 10px;
+            background: rgba(24, 24, 27, 0.95);
+            border: 1px solid rgba(255, 255, 255, 0.18);
+            border-radius: 6px;
+            padding: 4px 0;
+            min-width: 150px;
+            box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+            backdrop-filter: blur(12px);
+            z-index: 100;
+            -webkit-app-region: no-drag;
+        }
+        .rerun-item {
+            padding: 6px 12px;
+            font-size: 11px;
+            color: #e4e4e7;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+        }
+        .rerun-item:hover {
+            background: rgba(255, 255, 255, 0.12);
+            color: #ffffff;
+        }
+
+        .toast-popup {
+            position: absolute;
+            bottom: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            color: #f3f4f6;
+            font-size: 11px;
+            padding: 4px 12px;
+            border-radius: 12px;
+            z-index: 100;
+            pointer-events: none;
+            transition: opacity 0.3s ease;
         }
 
         .copy-btn { 
@@ -412,11 +531,33 @@
     <div class="main-container has-header">
         <!-- Draggable Header -->
         <div class="window-header">
-            <div class="window-title">AI Response</div>
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <div id="skill-badge-btn" class="skill-badge-btn" title="Click to re-run as another skill">
+                    <span id="conf-dot" class="conf-dot green"></span>
+                    <span id="badge-text">DSA · direct · concise</span>
+                    <span id="lock-icon" class="hidden">🔒</span>
+                </div>
+            </div>
             <div class="window-controls">
                 <button id="close-window-btn" class="window-btn window-btn-close" title="Close">×</button>
             </div>
         </div>
+
+        <!-- Re-run Dropdown Menu -->
+        <div id="rerun-menu" class="rerun-menu hidden">
+            <div style="padding: 4px 10px; font-size: 9.5px; color: #9ca3af; text-transform: uppercase; font-weight: bold; border-bottom: 1px solid rgba(255,255,255,0.08); margin-bottom: 2px;">Re-run as...</div>
+            <div class="rerun-item" data-skill="dsa"><span>DSA</span><span style="font-size: 9px; color: #9ca3af;">LeetCode</span></div>
+            <div class="rerun-item" data-skill="system-design"><span>System Design</span><span style="font-size: 9px; color: #9ca3af;">HLD</span></div>
+            <div class="rerun-item" data-skill="behavioral"><span>Behavioral</span><span style="font-size: 9px; color: #9ca3af;">HR</span></div>
+            <div class="rerun-item" data-skill="tech-qa"><span>Tech Q&A</span><span style="font-size: 9px; color: #9ca3af;">Debug/Q&A</span></div>
+            <div class="rerun-item" data-skill="general"><span>General</span><span style="font-size: 9px; color: #9ca3af;">Direct</span></div>
+        </div>
+
+        <!-- Action Bar -->
+        <div id="action-bar" class="action-bar-container"></div>
+
+        <!-- Toast notification -->
+        <div id="toast-popup" class="toast-popup hidden"></div>
 
         <!-- Loading State -->
         <div id="loading" class="loading">
@@ -514,6 +655,158 @@
             console.log('[LLM-RESPONSE] electronAPI exists:', !!window.electronAPI);
             console.log('[LLM-RESPONSE] onDisplayLlmResponse method:', typeof window.electronAPI?.onDisplayLlmResponse);
             
+        let currentResponseText = '';
+        let currentSkillConfidence = 0.8;
+        let currentImageType = 'direct';
+        let currentAnswerStyle = 'concise';
+        let isSkillLocked = false;
+        let streamBuffer = '';
+
+        function showToast(msg) {
+            const t = document.getElementById('toast-popup');
+            if (!t) return;
+            t.textContent = msg;
+            t.classList.remove('hidden');
+            t.style.opacity = '1';
+            setTimeout(() => {
+                t.style.opacity = '0';
+                setTimeout(() => t.classList.add('hidden'), 300);
+            }, 2000);
+        }
+
+        function updateBadge(skill, imageType, answerStyle, confidence, isLocked) {
+            currentSkill = skill || currentSkill || 'dsa';
+            currentImageType = imageType || currentImageType || 'direct';
+            currentAnswerStyle = answerStyle || currentAnswerStyle || 'concise';
+            if (confidence !== undefined && confidence !== null) currentSkillConfidence = parseFloat(confidence);
+            if (isLocked !== undefined) isSkillLocked = !!isLocked;
+
+            const badgeText = document.getElementById('badge-text');
+            const confDot = document.getElementById('conf-dot');
+            const lockIcon = document.getElementById('lock-icon');
+
+            if (badgeText) {
+                const s = currentSkill.toUpperCase();
+                const t = currentImageType !== 'unknown' ? currentImageType : 'direct';
+                const y = currentAnswerStyle !== 'auto' ? currentAnswerStyle : 'concise';
+                badgeText.textContent = `${s} · ${t} · ${y}`;
+            }
+
+            if (confDot) {
+                confDot.className = 'conf-dot';
+                if (currentSkillConfidence >= 0.8) confDot.classList.add('green');
+                else if (currentSkillConfidence >= 0.55) confDot.classList.add('amber');
+                else confDot.classList.add('red');
+            }
+
+            if (lockIcon) {
+                if (isSkillLocked) lockIcon.classList.remove('hidden');
+                else lockIcon.classList.add('hidden');
+            }
+        }
+
+        function updateActionBar(skill, metadata) {
+            const bar = document.getElementById('action-bar');
+            if (!bar) return;
+            bar.innerHTML = '';
+
+            const actions = [
+                { id: 'copy-code', label: '📋 Copy code' },
+                { id: 'copy-all', label: '📄 Copy all' },
+                { id: 'shorter', label: '⚡ Shorter' },
+                { id: 'example', label: '🔍 Example' },
+            ];
+
+            if (skill === 'dsa') {
+                actions.push(
+                    { id: 'dry-run', label: '🧪 Dry run' },
+                    { id: 'optimize', label: '🚀 Optimize' },
+                    { id: 'other-approach', label: '💡 Other approach' }
+                );
+            } else if (skill === 'system-design') {
+                actions.push(
+                    { id: 'api-detail', label: '🔌 API detail' },
+                    { id: 'scale-it', label: '📈 Scale it' },
+                    { id: 'trade-offs', label: '⚖️ Trade-offs' }
+                );
+            } else if (skill === 'behavioral') {
+                actions.push(
+                    { id: 'star-ify', label: '⭐ STAR-ify' },
+                    { id: '60-sec-version', label: '⏱️ 60-sec' },
+                    { id: 'add-metrics', label: '📊 Add metrics' }
+                );
+            } else if (skill === 'tech-qa') {
+                actions.push(
+                    { id: 'root-cause', label: '🎯 Root cause' },
+                    { id: 'fix-only', label: '🔧 Fix only' }
+                );
+            }
+
+            actions.push({ id: 'follow-up', label: '💬 Follow-up →' });
+
+            actions.forEach(action => {
+                const chip = document.createElement('button');
+                chip.className = 'action-chip';
+                chip.textContent = action.label;
+                chip.onclick = () => {
+                    if (action.id === 'copy-code') {
+                        if (window.electronAPI && window.electronAPI.copyLastCode) {
+                            window.electronAPI.copyLastCode().then(res => {
+                                showToast(res?.success ? 'Code copied to clipboard!' : 'No code block found');
+                            });
+                        }
+                    } else if (action.id === 'copy-all') {
+                        if (window.electronAPI && window.electronAPI.copyToClipboard) {
+                            window.electronAPI.copyToClipboard(currentResponseText);
+                            showToast('Full response copied!');
+                        }
+                    } else if (action.id === 'follow-up') {
+                        if (window.electronAPI && window.electronAPI.switchToChat) {
+                            window.electronAPI.switchToChat();
+                        }
+                    } else {
+                        chip.classList.add('active');
+                        showLoadingState();
+                        if (window.electronAPI && window.electronAPI.dispatchAction) {
+                            window.electronAPI.dispatchAction({ actionId: action.id })
+                                .finally(() => chip.classList.remove('active'));
+                        }
+                    }
+                };
+                bar.appendChild(chip);
+            });
+        }
+
+        function beginStreaming(data) {
+            streamBuffer = '';
+            showLoadingState();
+            const loadingElement = document.getElementById('loading');
+            const responseElement = document.getElementById('response-content');
+            const splitLayout = document.getElementById('split-layout');
+            const fullContent = document.getElementById('full-content');
+            const fullMarkdown = document.getElementById('full-markdown');
+            if (loadingElement) loadingElement.classList.add('hidden');
+            if (responseElement) responseElement.classList.remove('hidden');
+            if (splitLayout) splitLayout.classList.add('hidden');
+            if (fullContent) fullContent.classList.remove('hidden');
+            if (fullMarkdown) fullMarkdown.textContent = '';
+            if (data?.skill) {
+                updateBadge(data.skill, data.isImage ? 'screenshot' : 'voice', currentAnswerStyle, data.skillConfidence || 0.8, isSkillLocked);
+            }
+        }
+
+        function appendStreaming(data) {
+            const delta = typeof data === 'string' ? data : (data?.delta || '');
+            if (!delta) return;
+            streamBuffer += delta;
+            const fullMarkdown = document.getElementById('full-markdown');
+            if (fullMarkdown) {
+                fullMarkdown.textContent = streamBuffer;
+                const inner = document.querySelector('.full-content-inner');
+                if (inner) inner.scrollTop = inner.scrollHeight;
+            }
+        }
+            
             // Set up event listeners using electronAPI from preload script
             if (window.electronAPI) {
                 console.log('[LLM-RESPONSE] Setting up IPC listeners...');
@@ -523,6 +816,48 @@
                     console.log('[LLM-RESPONSE] show-loading received');
                     showLoadingState();
                 });
+
+                // Streaming listeners for screenshot and transcription
+                if (window.electronAPI.onLlmResponseStart) {
+                    window.electronAPI.onLlmResponseStart((event, data) => beginStreaming(data));
+                }
+                if (window.electronAPI.onLlmResponseChunk) {
+                    window.electronAPI.onLlmResponseChunk((event, data) => appendStreaming(data));
+                }
+                if (window.electronAPI.onTranscriptionLlmResponseStart) {
+                    window.electronAPI.onTranscriptionLlmResponseStart((event, data) => beginStreaming(data));
+                }
+                if (window.electronAPI.onTranscriptionLlmResponseChunk) {
+                    window.electronAPI.onTranscriptionLlmResponseChunk((event, data) => appendStreaming(data));
+                }
+
+                // Toast notifications
+                if (window.electronAPI.onToastNotification) {
+                    window.electronAPI.onToastNotification((event, data) => {
+                        if (data && data.message) showToast(data.message);
+                    });
+                }
+
+                // Show re-run menu shortcut
+                if (window.electronAPI.onShowRerunMenu) {
+                    window.electronAPI.onShowRerunMenu(() => {
+                        const m = document.getElementById('rerun-menu');
+                        if (m) m.classList.toggle('hidden');
+                    });
+                }
+
+                // Skill / Style / Preset change listeners
+                if (window.electronAPI.onSkillChanged) {
+                    window.electronAPI.onSkillChanged((event, data) => {
+                        updateBadge(data?.skill, currentImageType, currentAnswerStyle, currentSkillConfidence, data?.locked);
+                        updateActionBar(data?.skill || currentSkill);
+                    });
+                }
+                if (window.electronAPI.onStyleChanged) {
+                    window.electronAPI.onStyleChanged((event, data) => {
+                        updateBadge(currentSkill, currentImageType, data?.style, currentSkillConfidence, isSkillLocked);
+                    });
+                }
                 
                 // Listen for LLM response
                 window.electronAPI.onDisplayLlmResponse(function() {
@@ -530,7 +865,6 @@
                     console.log('[LLM-RESPONSE] arguments count:', arguments.length);
                     
                     try {
-                        // Get the data - could be first or second argument
                         let actualData = null;
                         if (arguments.length >= 2 && arguments[1] && typeof arguments[1] === 'object') {
                             actualData = arguments[1];
@@ -538,11 +872,7 @@
                             actualData = arguments[0];
                         }
                         
-                        console.log('[LLM-RESPONSE] actualData keys:', actualData ? Object.keys(actualData) : 'null');
-                        
                         const response = actualData?.content || actualData?.response;
-                        console.log('[LLM-RESPONSE] response found:', !!response, 'length:', response?.length);
-                        
                         if (!response) {
                             console.error('[LLM-RESPONSE] No response content found!');
                             hideLoadingState();
@@ -559,6 +889,33 @@
                         hideLoadingState();
                     }
                 });
+
+                // Wire re-run badge button & menu
+                const badgeBtn = document.getElementById('skill-badge-btn');
+                const rerunMenu = document.getElementById('rerun-menu');
+                if (badgeBtn && rerunMenu) {
+                    badgeBtn.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        rerunMenu.classList.toggle('hidden');
+                    });
+                    document.addEventListener('click', () => {
+                        rerunMenu.classList.add('hidden');
+                    });
+                    rerunMenu.querySelectorAll('.rerun-item').forEach(item => {
+                        item.addEventListener('click', (e) => {
+                            e.stopPropagation();
+                            const targetSkill = item.dataset.skill;
+                            rerunMenu.classList.add('hidden');
+                            if (window.electronAPI.rerunLast) {
+                                showLoadingState();
+                                window.electronAPI.rerunLast({ skill: targetSkill });
+                            }
+                        });
+                    });
+                }
+
+                // Initialize default action bar
+                updateActionBar('dsa');
                 
                 console.log('[LLM-RESPONSE] IPC listeners set up successfully');
             } else {
@@ -651,6 +1008,20 @@
                 return;
             }
             
+            currentResponseText = response;
+            try {
+                const meta = data.metadata || {};
+                const skill = meta.skill || data.skill || currentSkill || 'dsa';
+                const imgType = meta.imageType || data.imageType || (data.isImage ? 'screenshot' : 'direct');
+                const style = meta.answerStyle || data.answerStyle || currentAnswerStyle;
+                const confidence = meta.skillConfidence !== undefined ? meta.skillConfidence : data.skillConfidence;
+                const locked = meta.locked !== undefined ? meta.locked : (data.locked !== undefined ? data.locked : isSkillLocked);
+                updateBadge(skill, imgType, style, confidence, locked);
+                updateActionBar(skill, meta);
+            } catch (err) {
+                console.error('[LLM-RESPONSE] Error updating badge/action bar:', err);
+            }
+
             // Check if response contains code blocks
             const codeBlocks = extractCodeBlocks(response);
             hasCode = codeBlocks.length > 0;

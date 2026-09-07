@@ -76,7 +76,7 @@ class ChatWindowUI {
             // Speech recognition handlers
             window.electronAPI.onTranscriptionReceived((event, data) => {
                 if (data && data.text) {
-                    this.handleTranscription(data.text);
+                    this.handleTranscription(data.text, data.speaker);
                 } else {
                     console.warn('Transcription event received but no text data:', data);
                 }
@@ -137,7 +137,7 @@ class ChatWindowUI {
                 // Store AI response (text + snippets) in chat history
                 if (data && data.response) {
                     this.hideThinkingIndicator?.();
-                    this.renderAssistantResponse(data.response);
+                    this.renderAssistantResponse(data.response, data);
                 }
             });
             
@@ -151,7 +151,7 @@ class ChatWindowUI {
                     this.hideThinkingIndicator();
                     // Finalize the streaming bubble (if any) with fully formatted
                     // markdown + code snippets; otherwise render fresh.
-                    this.finalizeStreamingResponse(data.messageId, data.response);
+                    this.finalizeStreamingResponse(data.messageId, data.response, data);
                 }
             });
 
@@ -264,14 +264,15 @@ class ChatWindowUI {
         logger.debug('Recording stopped in chat window');
     }
 
-    handleTranscription(text) {
+    handleTranscription(text, speaker = null) {
         if (text && text.trim()) {
             // Hide listening animation first
             this.hideListeningAnimation();
             
+            const displayText = speaker === 'interviewer' ? `[Interviewer] ${text}` : (speaker === 'you' ? `[You] ${text}` : text);
             // Show transcribed text with a slight delay for smooth transition
             setTimeout(() => {
-                this.addMessage(text, 'transcription');
+                this.addMessage(displayText, 'transcription');
                 
                 // Show thinking indicator after transcription
                 setTimeout(() => {
@@ -279,7 +280,7 @@ class ChatWindowUI {
                 }, 300);
             }, 200);
             
-            logger.debug('Transcription received in chat', { textLength: text.length });
+            logger.debug('Transcription received in chat', { textLength: text.length, speaker });
         } else {
             console.warn('❌ Transcription text is empty or invalid:', text);
         }
@@ -343,7 +344,7 @@ class ChatWindowUI {
         }
     }
 
-    addMessage(text, type = 'user') {        
+    addMessage(text, type = 'user', metadata = {}) {        
         if (!this.elements.chatMessages) {
             console.error('❌ Chat messages element not found!');
             return;
@@ -355,6 +356,13 @@ class ChatWindowUI {
         const timeDiv = document.createElement('div');
         timeDiv.className = 'message-time';
         timeDiv.textContent = new Date().toLocaleTimeString();
+        
+        if (type === 'assistant' && metadata.skill) {
+            const badge = document.createElement('span');
+            badge.style.cssText = 'margin-left: 8px; font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: rgba(99, 102, 241, 0.2); color: #a5b4fc; border: 1px solid rgba(99, 102, 241, 0.4); text-transform: uppercase;';
+            badge.textContent = `${metadata.skill}${metadata.answerStyle ? ` · ${metadata.answerStyle}` : ''}`;
+            timeDiv.appendChild(badge);
+        }
         
         const textDiv = document.createElement('div');
         textDiv.className = 'message-text';
@@ -368,6 +376,49 @@ class ChatWindowUI {
         
         messageDiv.appendChild(timeDiv);
         messageDiv.appendChild(textDiv);
+        
+        // Add quick action chips under assistant messages
+        if (type === 'assistant') {
+            const chipsDiv = document.createElement('div');
+            chipsDiv.className = 'chat-action-chips';
+            chipsDiv.style.cssText = 'display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px;';
+            
+            const chips = [
+                { id: 'copy-code', label: '📋 Copy code' },
+                { id: 'shorter', label: '⚡ Shorter' },
+                { id: 'example', label: '🔍 Example' }
+            ];
+            
+            const skill = metadata.skill || 'dsa';
+            if (skill === 'dsa') {
+                chips.push({ id: 'dry-run', label: '🧪 Dry run' }, { id: 'optimize', label: '🚀 Optimize' });
+            } else if (skill === 'system-design') {
+                chips.push({ id: 'scale-it', label: '📈 Scale' }, { id: 'trade-offs', label: '⚖️ Trade-offs' });
+            } else if (skill === 'behavioral') {
+                chips.push({ id: 'star-ify', label: '⭐ STAR' }, { id: '60-sec-version', label: '⏱️ 60s' });
+            } else if (skill === 'tech-qa') {
+                chips.push({ id: 'root-cause', label: '🎯 Root cause' }, { id: 'fix-only', label: '🔧 Fix' });
+            }
+            
+            chips.forEach(chip => {
+                const btn = document.createElement('button');
+                btn.style.cssText = 'font-size: 11px; padding: 2px 8px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.15); background: rgba(255,255,255,0.06); color: rgba(255,255,255,0.8); cursor: pointer; transition: all 0.2s;';
+                btn.textContent = chip.label;
+                btn.onclick = () => {
+                    if (chip.id === 'copy-code') {
+                        if (window.electronAPI && window.electronAPI.copyLastCode) {
+                            window.electronAPI.copyLastCode();
+                        }
+                    } else if (window.electronAPI && window.electronAPI.dispatchAction) {
+                        btn.style.opacity = '0.5';
+                        window.electronAPI.dispatchAction({ actionId: chip.id })
+                            .finally(() => { btn.style.opacity = '1'; });
+                    }
+                };
+                chipsDiv.appendChild(btn);
+            });
+            messageDiv.appendChild(chipsDiv);
+        }
         
         this.elements.chatMessages.appendChild(messageDiv);
         
@@ -428,7 +479,7 @@ class ChatWindowUI {
 
     // Replace the streaming bubble with the formatted final response (markdown
     // text + extracted code snippets), matching non-streaming rendering.
-    finalizeStreamingResponse(messageId, response) {
+    finalizeStreamingResponse(messageId, response, metadata = {}) {
         const messageDiv = messageId && this.elements.chatMessages &&
             this.elements.chatMessages.querySelector(`[data-stream-id="${messageId}"]`);
         if (messageDiv) {
@@ -437,16 +488,16 @@ class ChatWindowUI {
         if (this._streamBuffers && messageId) {
             delete this._streamBuffers[messageId];
         }
-        this.renderAssistantResponse(response);
+        this.renderAssistantResponse(response, metadata);
     }
 
     // Split AI response into plain text and code snippets and append to chat
-    renderAssistantResponse(response) {
+    renderAssistantResponse(response, metadata = {}) {
         if (!response || typeof response !== 'string') return;
         const blocks = this.extractCodeBlocks(response);
         const textOnly = this.stripCodeBlocks(response, blocks);
         if (textOnly && textOnly.trim().length) {
-            this.addMessage(textOnly, 'assistant');
+            this.addMessage(textOnly, 'assistant', metadata);
         }
         blocks.forEach(b => this.addCodeSnippet(b.language, b.code));
     }

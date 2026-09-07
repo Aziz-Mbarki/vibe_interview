@@ -23,10 +23,16 @@ class MainWindowUI {
         this._scriptNode = null;
         this._captureInterval = null;
         
-        // Define available skills for navigation
+        // Define available skills for navigation (including auto)
         this.availableSkills = [
-            'dsa'
+            'auto',
+            'dsa',
+            'system-design',
+            'behavioral',
+            'tech-qa',
+            'general'
         ];
+        this.isSkillLocked = false;
         
         this.init();
     }
@@ -36,6 +42,19 @@ class MainWindowUI {
             this.setupElements();
             this.setupEventListeners();
             
+            // Load available skills dynamically
+            try {
+                if (window.electronAPI && window.electronAPI.getSkills) {
+                    const skills = await window.electronAPI.getSkills();
+                    if (Array.isArray(skills) && skills.length > 0) {
+                        const ids = skills.map(s => typeof s === 'string' ? s : s.id);
+                        this.availableSkills = ['auto', ...ids];
+                    }
+                }
+            } catch (e) {
+                logger.warn('Failed to fetch available skills', e);
+            }
+
             // Load current skill from settings
             await this.loadCurrentSkill();
             
@@ -288,16 +307,25 @@ class MainWindowUI {
             }
         });
 
-        // Skill indicator click handler toggles DSA skill
+        // Skill indicator click cycles through available skills
         this.skillIndicator.addEventListener('click', () => {
             if (!this.isInteractive) return;
-            const newSkill = 'dsa';
-            if (window.electronAPI && window.electronAPI.updateActiveSkill) {
-                window.electronAPI.updateActiveSkill(newSkill).then(() => {
-                    this.handleSkillActivated(newSkill);
-                });
-            } else {
-                this.handleSkillActivated(newSkill);
+            this.navigateSkill(1);
+        });
+
+        // Right-click toggles lock
+        this.skillIndicator.addEventListener('contextmenu', async (e) => {
+            e.preventDefault();
+            if (!this.isInteractive) return;
+            if (window.electronAPI && window.electronAPI.setSkillLock) {
+                const target = this.isSkillLocked ? null : (this.currentSkill === 'auto' ? 'dsa' : this.currentSkill);
+                try {
+                    const res = await window.electronAPI.setSkillLock(target);
+                    this.isSkillLocked = !!res?.locked;
+                    this.updateSkillIndicator();
+                } catch (err) {
+                    logger.error('Failed to toggle skill lock', err);
+                }
             }
         });
 
@@ -818,57 +846,55 @@ class MainWindowUI {
         }
     }
 
+    handleSkillChanged(data) {
+        if (!data) return;
+        const skill = typeof data === 'string' ? data : (data.skill || this.currentSkill);
+        this.currentSkill = skill;
+        if (data.locked !== undefined) {
+            this.isSkillLocked = !!data.locked;
+        }
+        if (Array.isArray(data.availableSkills) && data.availableSkills.length > 0) {
+            const ids = data.availableSkills.map(s => typeof s === 'string' ? s : s.id);
+            this.availableSkills = ids.includes('auto') ? ids : ['auto', ...ids];
+        }
+        this.updateSkillIndicator();
+    }
+
+    handleSkillActivated(skill) {
+        this.currentSkill = skill;
+        this.updateSkillIndicator();
+    }
+
     updateSkillIndicator() {
         const skillNames = {
+            'auto': 'Auto',
             'dsa': 'DSA',
-            'behavioral': 'Behavioral', 
-            'sales': 'Sales',
-            'presentation': 'Presentation',
-            'data-science': 'Data Science',
-            'programming': 'Programming',
-            'devops': 'DevOps',
             'system-design': 'System Design',
-            'negotiation': 'Negotiation'
+            'behavioral': 'Behavioral', 
+            'tech-qa': 'Tech Q&A',
+            'general': 'General'
         };
-        
-        logger.info('Updating skill indicator', {
-            component: 'MainWindowUI',
-            currentSkill: this.currentSkill,
-            skillIndicatorExists: !!this.skillIndicator
-        });
         
         if (!this.skillIndicator) {
             logger.error('Skill indicator element not found!');
             return;
         }
         
-        const skillName = skillNames[this.currentSkill] || this.currentSkill.toUpperCase();
+        const baseName = skillNames[this.currentSkill] || this.currentSkill.toUpperCase();
+        const displayName = this.isSkillLocked ? `🔒 ${baseName}` : baseName;
         const skillSpan = this.skillIndicator.querySelector('span');
-        
-        logger.info('Looking for skill span element', {
-            component: 'MainWindowUI',
-            spanExists: !!skillSpan,
-            skillName: skillName
-        });
         
         if (skillSpan) {
             const oldText = skillSpan.textContent;
-            skillSpan.textContent = skillName;
+            skillSpan.textContent = displayName;
                         
             const tooltip = this.isInteractive ? 
-                `${skillName} - Use ⌘↑/↓ to navigate skills` : 
-                `${skillName} - Enable interactive mode (Alt+A) to navigate`;
+                `${baseName} ${this.isSkillLocked ? '(Locked)' : ''} - Click / ⌘↑↓ to cycle, Right-click to lock` : 
+                `${baseName} ${this.isSkillLocked ? '(Locked)' : ''} - Enable interactive mode (Alt+A) to navigate`;
             this.skillIndicator.title = tooltip;
             
             // Add visual feedback for skill change
             this.animateSkillChange();
-            
-            logger.info('Skill indicator updated successfully', {
-                component: 'MainWindowUI',
-                oldText: oldText,
-                newText: skillName,
-                interactive: this.isInteractive
-            });
         } else {
             logger.error('Skill span element not found within skill indicator!');
         }
@@ -886,15 +912,13 @@ class MainWindowUI {
     }
 
     navigateSkill(direction) {
-        
         if (!this.isInteractive) {
             return;
         }
         
-        const currentIndex = this.availableSkills.indexOf(this.currentSkill);
+        let currentIndex = this.availableSkills.indexOf(this.currentSkill);
         if (currentIndex === -1) {
-            logger.error('Current skill not found in available skills array');
-            return;
+            currentIndex = 0;
         }
         
         // Calculate new index with wrapping
@@ -933,15 +957,12 @@ class MainWindowUI {
 
     showSkillChangeNotification(skill, direction) {
         const skillNames = {
+            'auto': 'Auto',
             'dsa': 'DSA',
-            'behavioral': 'Behavioral', 
-            'sales': 'Sales',
-            'presentation': 'Presentation',
-            'data-science': 'Data Science',
-            'programming': 'Programming',
-            'devops': 'DevOps',
             'system-design': 'System Design',
-            'negotiation': 'Negotiation'
+            'behavioral': 'Behavioral', 
+            'tech-qa': 'Tech Q&A',
+            'general': 'General'
         };
         
         const displayName = skillNames[skill] || skill.toUpperCase();

@@ -94,6 +94,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   listDisplays: () => ipcRenderer.invoke('list-displays'),
   captureArea: (options) => ipcRenderer.invoke('capture-area', options),
   
+  // Phase 1 Multi-skill & Router APIs
+  getSkills: () => ipcRenderer.invoke('get-skills'),
+  setInterviewPreset: (preset) => ipcRenderer.invoke('set-interview-preset', preset),
+  setAnswerStyle: (style) => ipcRenderer.invoke('set-answer-style', style),
+  setSkillLock: (skillId) => ipcRenderer.invoke('set-skill-lock', skillId),
+  rerunLast: (options) => ipcRenderer.invoke('rerun-last', options),
+  dispatchAction: (options) => ipcRenderer.invoke('dispatch-action', options),
+  copyLastCode: () => ipcRenderer.invoke('copy-last-code'),
+
   // Event listeners
   onTranscriptionReceived: (callback) => ipcRenderer.on('transcription-received', callback),
   onInterimTranscription: (callback) => ipcRenderer.on('interim-transcription', callback),
@@ -106,6 +115,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onOcrError: (callback) => ipcRenderer.on('ocr-error', callback),
   onLlmResponse: (callback) => ipcRenderer.on('llm-response', callback),
   onLlmError: (callback) => ipcRenderer.on('llm-error', callback),
+  onLlmResponseStart: (callback) => ipcRenderer.on('llm-response-start', callback),
+  onLlmResponseChunk: (callback) => ipcRenderer.on('llm-response-chunk', callback),
   onTranscriptionLlmResponse: (callback) => ipcRenderer.on('transcription-llm-response', callback),
   onTranscriptionLlmResponseStart: (callback) => ipcRenderer.on('transcription-llm-response-start', callback),
   onTranscriptionLlmResponseChunk: (callback) => ipcRenderer.on('transcription-llm-response-chunk', callback),
@@ -113,6 +124,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onDisplayLlmResponse: (callback) => ipcRenderer.on('display-llm-response', callback),
   onShowLoading: (callback) => ipcRenderer.on('show-loading', callback),
   onSkillChanged: (callback) => ipcRenderer.on('skill-changed', callback),
+  onPresetChanged: (callback) => ipcRenderer.on('preset-changed', callback),
+  onStyleChanged: (callback) => ipcRenderer.on('style-changed', callback),
+  onShowRerunMenu: (callback) => ipcRenderer.on('show-rerun-menu', callback),
+  onToastNotification: (callback) => ipcRenderer.on('toast-notification', callback),
   onInteractionModeChanged: (callback) => ipcRenderer.on('interaction-mode-changed', callback),
   onRecordingStarted: (callback) => ipcRenderer.on('recording-started', callback),
   onRecordingStopped: (callback) => ipcRenderer.on('recording-stopped', callback),

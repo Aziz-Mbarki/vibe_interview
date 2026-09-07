@@ -26,7 +26,8 @@ class SessionManager {
       const availableSkills = promptLoader.getAvailableSkills();
       
       // Add initial system context for each skill
-      for (const skill of availableSkills) {
+      for (const skillItem of availableSkills) {
+        const skill = typeof skillItem === 'string' ? skillItem : skillItem.id;
         const skillPrompt = promptLoader.getSkillPrompt(skill);
         if (skillPrompt) {
           const event = this.createConversationEvent({
@@ -257,6 +258,17 @@ class SessionManager {
       programmingLanguage,
       requiresProgrammingLanguage: promptLoader.requiresProgrammingLanguage(targetSkill)
     };
+  }
+
+  /**
+   * Get recent conversation events filtered by skill
+   * @param {string} skill - Target skill name
+   * @param {number} n - Maximum number of recent events
+   */
+  getRecentBySkill(skill, n = 10) {
+    return this.sessionMemory
+      .filter(event => (event.skill === skill || event.metadata?.skill === skill) && !event.metadata?.isInitialization)
+      .slice(-n);
   }
 
   addEvent(action, details = {}) {

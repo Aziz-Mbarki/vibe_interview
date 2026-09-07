@@ -129,18 +129,41 @@ For local Whisper, `./setup.sh` handles the full setup. It creates `.venv-whispe
 
 For Azure Speech, create a Speech resource in the [Azure Portal](https://portal.azure.com/), then add the key and region to `.env` with `SPEECH_PROVIDER=azure`.
 
-## How it works
+## Global Interview Doctrine
 
-1. **Ask.** Speak the question or press the screenshot shortcut. The microphone listens for natural pauses on its own and does not cut you off mid sentence.
-2. **Reason.** Gemini reads the audio or image with full conversation context and works toward a precise answer.
-3. **Answer.** The response streams into the overlay in real time, with formatted text and highlighted code.
+OpenCluely operates under the **Global Interview Doctrine**:
+> **Always answer, never ask questions back, lead with the solution first, and keep output glanceable (<120 words for speech, key idea and code above the fold).** Ambiguous inputs result in a 1-line assumption and an immediate, best-effort solution.
+
+## Skills & Presets
+
+OpenCluely adapts its responses to the specific interview round via intelligent routing or manual presets:
+
+| Skill | Focus & Format | Default Style |
+|---|---|---|
+| `dsa` | LeetCode / Data Structures & Algorithms with complexity analysis | `concise` |
+| `system-design` | HLD, APIs, Data Model, Components, Scaling, Trade-offs | `structured` |
+| `behavioral` | First-person speakable teleprompter scripts (STAR stories, Why Us) | `spoken` |
+| `tech-qa` | Concepts, language trivia, and rapid debug workflows | `concise` |
+| `general` | Direct fallback for mixed questions | `concise` |
+
+**Presets:**
+- `full` (Default): Auto-detects between all skills using screen and speech context.
+- `coding`: Biased toward DSA and Tech Q&A.
+- `system-design`: Biased toward System Design and Architecture.
+- `hr`: Biased toward Behavioral and General.
 
 ## Keyboard shortcuts
 
 | Action | Shortcut | Description |
 |---|---|---|
-| Screenshot capture | `Cmd/Ctrl + Shift + S` | Capture the screen and analyze it with Gemini |
-| Toggle speech | `Alt + R` | Start or stop voice recognition, if configured |
+| Screenshot capture | `Cmd/Ctrl + Shift + S` | Capture entire screen and analyze with Gemini |
+| Area screenshot | `Cmd/Ctrl + Shift + A` | Capture selected screen area and analyze |
+| Cycle skill (incl. Auto) | `Cmd/Ctrl + Shift + Tab` | Switch active skill mode or auto-detect |
+| Lock / unlock skill | `Cmd/Ctrl + Shift + L` | Lock current skill to prevent auto-switching |
+| Cycle answer style | `Cmd/Ctrl + Shift + Y` | Switch style (concise, structured, spoken, deep) |
+| Copy last code block | `Cmd/Ctrl + Shift + G` | Copy first/largest code block to clipboard |
+| Re-run last as... | `Cmd/Ctrl + Shift + E` | Open overlay menu to re-run last input with another skill |
+| Toggle speech | `Alt + R` | Start or stop push-to-talk voice recognition |
 | Toggle visibility | `Cmd/Ctrl + Shift + V` | Show or hide all windows |
 | Toggle interaction | `Cmd/Ctrl + Shift + I` or `Alt + A` | Enable or disable click through |
 | Open chat | `Cmd/Ctrl + Shift + C` | Open the interactive chat window |

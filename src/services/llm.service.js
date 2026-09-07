@@ -2,6 +2,7 @@ const { GoogleGenAI } = require('@google/genai');
 const logger = require('../core/logger').createServiceLogger('LLM');
 const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
+const { skillRouterService } = require('./skill-router.service');
 
 class LLMService {
   constructor() {
@@ -120,7 +121,18 @@ class LLMService {
    * @param {string|null} programmingLanguage - optional language context for skills that need it
    * @returns {Promise<{response: string, metadata: object}>}
    */
-  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  /**
+   * Process an image directly with Gemini using the active skill prompt.
+   * Supports one-call classification header and doctrine compliance.
+   * @param {Buffer} imageBuffer - PNG/JPEG image bytes
+   * @param {string} mimeType - e.g., 'image/png' or 'image/jpeg'
+   * @param {string} activeSkill - current skill (e.g. 'dsa')
+   * @param {Array} sessionMemory - optional
+   * @param {string|null} programmingLanguage - optional language context
+   * @param {object} options - { lockedSkill, style, candidateProfile }
+   * @returns {Promise<{response: string, metadata: object}>}
+   */
+  async processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
@@ -132,12 +144,17 @@ class LLMService {
     const startTime = Date.now();
     this.requestCount++;
 
-    try {
-      // Build system instruction using the skill prompt (with optional language injection)
-      const { promptLoader } = require('../../prompt-loader');
-      const skillPrompt = promptLoader.getSkillPrompt(activeSkill, programmingLanguage) || '';
+    const lockedSkill = options.lockedSkill || null;
+    const answerStyle = options.style || null;
+    const candidateProfile = options.candidateProfile || null;
 
-      // Build request with text + image parts
+    try {
+      const skillPrompt = promptLoader.buildSystemPrompt(activeSkill, {
+        language: programmingLanguage,
+        style: answerStyle,
+        candidateProfile
+      });
+
       const base64 = imageBuffer.toString('base64');
 
       const request = {
@@ -145,7 +162,7 @@ class LLMService {
           {
             role: 'user',
             parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage) },
+              { text: this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle) },
               { inlineData: { data: base64, mimeType } }
             ]
           }
@@ -158,7 +175,6 @@ class LLMService {
         request.systemInstruction = { parts: [{ text: skillPrompt }] };
       }
 
-      // Execute with retries/timeout - try alternative method first for network reliability
       let responseText;
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       try {
@@ -184,13 +200,21 @@ class LLMService {
         }
       }
 
-      // Enforce language in code fences if provided
+      // Parse one-call router header
+      const parsed = skillRouterService.parseRouterHeader(responseText);
+      const cleanResponse = parsed.headerFound ? parsed.cleanedText : responseText;
+      const detectedSkill = lockedSkill || parsed.skill || activeSkill;
+      const imageType = parsed.imageType || 'unknown';
+      const skillConfidence = parsed.skillConfidence !== null ? parsed.skillConfidence : (lockedSkill ? 1.0 : 0.8);
+
       const finalResponse = programmingLanguage
-        ? this.enforceProgrammingLanguage(responseText, programmingLanguage)
-        : responseText;
+        ? this.enforceProgrammingLanguage(cleanResponse, programmingLanguage)
+        : cleanResponse;
+
+      this.checkDoctrineCompliance(finalResponse, 'image_analysis');
 
       logger.logPerformance('LLM image processing', startTime, {
-        activeSkill,
+        activeSkill: detectedSkill,
         imageSize: imageBuffer.length,
         responseLength: finalResponse.length,
         programmingLanguage: programmingLanguage || 'not specified',
@@ -200,8 +224,12 @@ class LLMService {
       return {
         response: finalResponse,
         metadata: {
-          skill: activeSkill,
+          skill: detectedSkill,
+          imageType,
+          skillConfidence,
           programmingLanguage,
+          answerStyle: answerStyle || 'concise',
+          locked: !!lockedSkill,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false,
@@ -224,18 +252,148 @@ class LLMService {
     }
   }
 
-  formatImageInstruction(activeSkill, programmingLanguage) {
-    const langNote = programmingLanguage ? ` Use only ${programmingLanguage.toUpperCase()} for any code.` : '';
-    return `Analyze this image for a ${activeSkill.toUpperCase()} question. Extract the problem concisely and provide the best possible solution with explanation and final code.${langNote}`;
+  /**
+   * Stream image analysis response with incremental token delivery.
+   * Strips the one-call classification header before sending chunks to onDelta.
+   */
+  async processImageWithSkillStream(imageBuffer, mimeType, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}, onDelta = null) {
+    if (!this.isInitialized) {
+      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+    }
+
+    if (!imageBuffer || !Buffer.isBuffer(imageBuffer)) {
+      throw new Error('Invalid image buffer provided to processImageWithSkillStream');
+    }
+
+    const startTime = Date.now();
+    this.requestCount++;
+
+    const lockedSkill = options.lockedSkill || null;
+    const answerStyle = options.style || null;
+    const candidateProfile = options.candidateProfile || null;
+
+    try {
+      const skillPrompt = promptLoader.buildSystemPrompt(activeSkill, {
+        language: programmingLanguage,
+        style: answerStyle,
+        candidateProfile
+      });
+
+      const base64 = imageBuffer.toString('base64');
+
+      const request = {
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle) },
+              { inlineData: { data: base64, mimeType } }
+            ]
+          }
+        ]
+      };
+
+      this.applyGenerationDefaults(request);
+
+      if (skillPrompt && skillPrompt.trim().length > 0) {
+        request.systemInstruction = { parts: [{ text: skillPrompt }] };
+      }
+
+      let fullRawText = '';
+      let headerStripped = false;
+      let headerBuffer = '';
+
+      await this.executeStreamingRequest(request, (delta) => {
+        fullRawText += delta;
+
+        if (!headerStripped) {
+          headerBuffer += delta;
+          const newlineIdx = headerBuffer.indexOf('\n');
+          if (newlineIdx !== -1) {
+            headerStripped = true;
+            const remaining = headerBuffer.slice(newlineIdx + 1);
+            headerBuffer = '';
+            if (remaining && typeof onDelta === 'function') {
+              onDelta(remaining);
+            }
+          }
+        } else {
+          if (typeof onDelta === 'function') {
+            onDelta(delta);
+          }
+        }
+      });
+
+      const parsed = skillRouterService.parseRouterHeader(fullRawText);
+      const cleanResponse = parsed.headerFound ? parsed.cleanedText : fullRawText;
+      const detectedSkill = lockedSkill || parsed.skill || activeSkill;
+      const imageType = parsed.imageType || 'unknown';
+      const skillConfidence = parsed.skillConfidence !== null ? parsed.skillConfidence : (lockedSkill ? 1.0 : 0.8);
+
+      const finalResponse = programmingLanguage
+        ? this.enforceProgrammingLanguage(cleanResponse, programmingLanguage)
+        : cleanResponse;
+
+      this.checkDoctrineCompliance(finalResponse, 'image_streaming');
+
+      logger.logPerformance('LLM image streaming', startTime, {
+        activeSkill: detectedSkill,
+        imageSize: imageBuffer.length,
+        responseLength: finalResponse.length,
+        programmingLanguage: programmingLanguage || 'not specified',
+        requestId: this.requestCount
+      });
+
+      return {
+        response: finalResponse,
+        metadata: {
+          skill: detectedSkill,
+          imageType,
+          skillConfidence,
+          programmingLanguage,
+          answerStyle: answerStyle || 'concise',
+          locked: !!lockedSkill,
+          processingTime: Date.now() - startTime,
+          requestId: this.requestCount,
+          usedFallback: false,
+          streamed: true,
+          isImageAnalysis: true,
+          mimeType
+        }
+      };
+    } catch (error) {
+      logger.warn('Streaming image processing failed, falling back to non-streaming', {
+        error: error.message,
+        requestId: this.requestCount
+      });
+      return this.processImageWithSkill(imageBuffer, mimeType, activeSkill, sessionMemory, programmingLanguage, options);
+    }
   }
 
-  async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  formatImageInstruction(activeSkill, programmingLanguage, lockedSkill = null, answerStyle = null) {
+    const langNote = programmingLanguage ? ` Use only ${programmingLanguage.toUpperCase()} for any code.` : '';
+    const lockDirective = lockedSkill
+      ? `Skill is LOCKED to: ${lockedSkill}. Solve strictly as ${lockedSkill}.`
+      : 'First classify the image into the most appropriate skill: dsa, system-design, behavioral, tech-qa, or general.';
+
+    return `Analyze this screenshot for a live interview.
+First line of your reply MUST be:
+SKILL: <dsa|system-design|behavioral|tech-qa|general> | TYPE: <coding_problem|error_traceback|terminal_output|diagram|mcq_quiz|doc_text|whiteboard|ui_bug|unknown> | CONF: <0.0-1.0>
+Second line onward: THE SOLUTION, immediately (no restating the problem, no preamble).
+${lockDirective}
+If ambiguous, state your assumption in ONE short line ("Assuming: ..."), then solve. Never ask what to do — solve.${langNote}`;
+  }
+
+  async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
 
     const startTime = Date.now();
     this.requestCount++;
+    const answerStyle = options.style || null;
+    const candidateProfile = options.candidateProfile || null;
+    const lockedSkill = options.lockedSkill || null;
     
     try {
       logger.info('Processing text with LLM', {
@@ -243,10 +401,11 @@ class LLMService {
         textLength: text.length,
         hasSessionMemory: sessionMemory.length > 0,
         programmingLanguage: programmingLanguage || 'not specified',
+        answerStyle,
         requestId: this.requestCount
       });
 
-      const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const geminiRequest = this.buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage, options);
 
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       let response;
@@ -281,6 +440,8 @@ class LLMService {
         ? this.enforceProgrammingLanguage(response, programmingLanguage)
         : response;
 
+      this.checkDoctrineCompliance(finalResponse, 'text_chat');
+
       logger.logPerformance('LLM text processing', startTime, {
         activeSkill,
         textLength: text.length,
@@ -294,6 +455,8 @@ class LLMService {
         metadata: {
           skill: activeSkill,
           programmingLanguage,
+          answerStyle: answerStyle || 'concise',
+          locked: !!lockedSkill,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
           usedFallback: false
@@ -316,13 +479,23 @@ class LLMService {
     }
   }
 
-  async processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory = [], programmingLanguage = null) {
+  async processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
 
+    if (typeof activeSkill === 'object' && activeSkill !== null && !Array.isArray(activeSkill)) {
+      options = activeSkill;
+      activeSkill = options.activeSkill || options.skill || 'dsa';
+      sessionMemory = options.history || options.sessionMemory || [];
+      programmingLanguage = options.programmingLanguage || options.codingLanguage || null;
+    }
+
     const startTime = Date.now();
     this.requestCount++;
+    const answerStyle = options.style || 'spoken';
+    const lockedSkill = options.lockedSkill || null;
+    const speaker = options.speaker || null;
     
     try {
       logger.info('Processing transcription with intelligent response', {
@@ -330,10 +503,12 @@ class LLMService {
         textLength: text.length,
         hasSessionMemory: sessionMemory.length > 0,
         programmingLanguage: programmingLanguage || 'not specified',
+        answerStyle,
+        speaker,
         requestId: this.requestCount
       });
 
-      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage, options);
 
       const preferAlternative = !!config.get('llm.gemini.enableFallbackMethod');
       let response;
@@ -368,6 +543,8 @@ class LLMService {
         ? this.enforceProgrammingLanguage(response, programmingLanguage)
         : response;
 
+      this.checkDoctrineCompliance(finalResponse, 'transcription');
+
       logger.logPerformance('LLM transcription processing', startTime, {
         activeSkill,
         textLength: text.length,
@@ -380,6 +557,10 @@ class LLMService {
         response: finalResponse,
         metadata: {
           skill: activeSkill,
+          skillConfidence: options.skillConfidence !== undefined ? options.skillConfidence : 0.8,
+          answerStyle,
+          speaker,
+          locked: !!lockedSkill,
           programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
@@ -432,23 +613,15 @@ class LLMService {
     }
   }
 
-  buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage) {
+  buildGeminiRequest(text, activeSkill, sessionMemory, programmingLanguage, options = {}) {
     // Check if we have the new conversation history format
     const sessionManager = require('../managers/session.manager');
     
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
       const conversationHistory = sessionManager.getConversationHistory(15);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
-      return this.buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage);
+      return this.buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage, options);
     }
-
-    // Fallback to old method for compatibility - now with programming language support
-    const requestComponents = promptLoader.getRequestComponents(
-      activeSkill, 
-      text, 
-      sessionMemory,
-      programmingLanguage
-    );
 
     const request = {
       contents: []
@@ -456,18 +629,16 @@ class LLMService {
 
     this.applyGenerationDefaults(request);
 
-    // Use the skill prompt that already has programming language injected
-    if (requestComponents.shouldUseModelMemory && requestComponents.skillPrompt) {
+    const systemInstructionText = promptLoader.buildSystemPrompt(activeSkill, {
+      language: programmingLanguage,
+      style: options.style || null,
+      candidateProfile: options.candidateProfile || null
+    });
+
+    if (systemInstructionText && systemInstructionText.trim().length > 0) {
       request.systemInstruction = {
-        parts: [{ text: requestComponents.skillPrompt }]
+        parts: [{ text: systemInstructionText }]
       };
-      
-      logger.debug('Using language-enhanced system instruction for skill', {
-        skill: activeSkill,
-        programmingLanguage: programmingLanguage || 'not specified',
-        promptLength: requestComponents.skillPrompt.length,
-        requiresProgrammingLanguage: requestComponents.requiresProgrammingLanguage
-      });
     }
 
     request.contents.push({
@@ -478,25 +649,29 @@ class LLMService {
     return request;
   }
 
-  buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage) {
+  buildGeminiRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage, options = {}) {
     const request = {
       contents: []
     };
 
     this.applyGenerationDefaults(request);
 
-    // Use the skill prompt from context (which may already include programming language)
-    if (skillContext.skillPrompt) {
+    const systemInstructionText = promptLoader.buildSystemPrompt(activeSkill, {
+      language: programmingLanguage,
+      style: options.style || null,
+      candidateProfile: options.candidateProfile || null
+    });
+
+    if (systemInstructionText && systemInstructionText.trim().length > 0) {
       request.systemInstruction = {
-        parts: [{ text: skillContext.skillPrompt }]
+        parts: [{ text: systemInstructionText }]
       };
       
-      logger.debug('Using skill context prompt as system instruction', {
+      logger.debug('Using doctrine-composed system instruction for skill', {
         skill: activeSkill,
         programmingLanguage: programmingLanguage || 'not specified',
-        promptLength: skillContext.skillPrompt.length,
-        requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false,
-        hasLanguageInjection: programmingLanguage && skillContext.requiresProgrammingLanguage
+        promptLength: systemInstructionText.length,
+        style: options.style || 'default'
       });
     }
 
@@ -536,14 +711,13 @@ class LLMService {
       programmingLanguage: programmingLanguage || 'not specified',
       historyLength: conversationHistory.length,
       totalContents: request.contents.length,
-      hasSystemInstruction: !!request.systemInstruction,
-      requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false
+      hasSystemInstruction: !!request.systemInstruction
     });
 
     return request;
   }
 
-  buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage) {
+  buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage, options = {}) {
     // Validate input text first
     const cleanText = text && typeof text === 'string' ? text.trim() : '';
     if (!cleanText) {
@@ -556,7 +730,7 @@ class LLMService {
     if (sessionManager && typeof sessionManager.getConversationHistory === 'function') {
       const conversationHistory = sessionManager.getConversationHistory(10);
       const skillContext = sessionManager.getSkillContext(activeSkill, programmingLanguage);
-      return this.buildIntelligentTranscriptionRequestWithHistory(cleanText, activeSkill, conversationHistory, skillContext, programmingLanguage);
+      return this.buildIntelligentTranscriptionRequestWithHistory(cleanText, activeSkill, conversationHistory, skillContext, programmingLanguage, options);
     }
 
     // Fallback to basic intelligent request
@@ -567,7 +741,7 @@ class LLMService {
     this.applyGenerationDefaults(request);
 
     // Add intelligent filtering system instruction
-    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
+    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage, options.style, options);
     if (!intelligentPrompt) {
       throw new Error('Failed to generate intelligent transcription prompt');
     }
@@ -591,21 +765,19 @@ class LLMService {
     return request;
   }
 
-  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage) {
+  buildIntelligentTranscriptionRequestWithHistory(text, activeSkill, conversationHistory, skillContext, programmingLanguage, options = {}) {
     const request = {
       contents: []
     };
 
     this.applyGenerationDefaults(request);
 
-  // For chat/transcription messages, DO NOT include the full skill prompt; use only the intelligent filter prompt
-  const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage);
-  request.systemInstruction = { parts: [{ text: intelligentPrompt }] };
+    const intelligentPrompt = this.getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage, options.style, options);
+    request.systemInstruction = { parts: [{ text: intelligentPrompt }] };
 
     // Add recent conversation history (excluding system messages) with validation
     const conversationContents = conversationHistory
       .filter(event => {
-        // Filter out system messages and ensure content exists and is valid
         return event.role !== 'system' && 
                event.content && 
                typeof event.content === 'string' && 
@@ -623,7 +795,7 @@ class LLMService {
           parts: [{ text: content }]
         };
       })
-      .filter(content => content !== null); // Remove any null entries
+      .filter(content => content !== null);
 
     // Add the conversation history
     request.contents.push(...conversationContents);
@@ -649,70 +821,50 @@ class LLMService {
       programmingLanguage: programmingLanguage || 'not specified',
       historyLength: conversationHistory.length,
       totalContents: request.contents.length,
-      hasSkillPrompt: !!skillContext.skillPrompt,
-      cleanTextLength: cleanText.length,
-      requiresProgrammingLanguage: skillContext.requiresProgrammingLanguage || false
+      cleanTextLength: cleanText.length
     });
 
     return request;
   }
 
-  getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage) {
-    let prompt = `# Intelligent Transcription Response System
+  getIntelligentTranscriptionPrompt(activeSkill, programmingLanguage, style = 'spoken', options = {}) {
+    const basePrompt = promptLoader.buildSystemPrompt(activeSkill, {
+      language: programmingLanguage,
+      style: style || 'spoken',
+      candidateProfile: options.candidateProfile || null
+    });
 
-Assume you are asked a question in ${activeSkill.toUpperCase()} mode. Your job is to intelligently respond to question/message with appropriate brevity.
-Assume you are in an interview and you need to perform best in ${activeSkill.toUpperCase()} mode.
-Always respond to the point, do not repeat the question or unnecessary information which is not related to ${activeSkill}.`;
+    const isCopilot = !!options.isCopilot;
+    const speaker = options.speaker || null;
+    const speakerContext = speaker === 'you'
+      ? '\nNOTE: The incoming transcript is labeled [You] (the candidate is rephrasing or relaying the interviewer\'s question). Formulate the answer directly as talking points the candidate can say back.'
+      : (speaker === 'interviewer' ? '\nNOTE: The incoming transcript is labeled [Interviewer]. Answer this interviewer question directly.' : '');
 
-    // Add programming language context if provided
-    if (programmingLanguage) {
-      const lang = String(programmingLanguage).toLowerCase();
-      const languageMap = { cpp: 'C++', c: 'C', python: 'Python', java: 'Java', javascript: 'JavaScript', js: 'JavaScript' };
-      const fenceTagMap = { cpp: 'cpp', c: 'c', python: 'python', java: 'java', javascript: 'javascript', js: 'javascript' };
-      const languageTitle = languageMap[lang] || (lang.charAt(0).toUpperCase() + lang.slice(1));
-      const fenceTag = fenceTagMap[lang] || lang || 'text';
-      prompt += `\n\nCODING CONTEXT: Respond ONLY in ${languageTitle}. All code blocks must use triple backticks with language tag \`\`\`${fenceTag}\`\`\`. Do not include other languages unless explicitly asked.`;
-    }
+    const copilotInstruction = isCopilot
+      ? '\nCOPILOT MODE ACTIVE: If this spoken utterance is casual chatter, background noise, or not a question/technical prompt requiring an answer, reply with EXACTLY: NO_REPLY'
+      : '';
 
-    prompt += `\n\nNATURAL LANGUAGE RULE: Automatically detect and respond in the same human language as the user's question or speech (e.g. if the user speaks French, reply in French; if Arabic, reply in Arabic; if English, reply in English). Code and implementations must always be written in the specified coding language.`;
+    const spokenRules = `
 
-    prompt += `
+## LIVE SPOKEN INTERVIEW TRANSCRIPTION INSTRUCTIONS (Audio Speech Input)
+${speakerContext}${copilotInstruction}
 
-## Response Rules:
+1. CHIT-CHAT & GREETINGS:
+   - If the utterance is purely casual chit-chat, a greeting, or mic check ("hello", "hi there", "can you hear me", "testing"):
+     Respond with EXACTLY ONE short acknowledgment line (e.g. "Yeah, I'm listening.").
+     NEVER output a full essay or paragraph for greetings.
+     NEVER ask a question back.
+2. AMBIGUITY & FRAGMENT RECONSTRUCTION:
+   - If the transcript is a cut-off fragment or half-sentence: Pick the most probable question, state your assumption in ONE short italic line ("*Assuming you asked: ...*"), then give the full direct answer.
+   - NEVER say "Could you please repeat that?" or "Can you clarify?".
+3. TELEPROMPTER ORDERING (GLANCE-FIRST):
+   - Line 1: 5-second opening hook (the verdict, key idea, or script opener). The candidate speaks this first.
+   - Above fold: 2 to 4 glanceable talking points / bullets or concise code.
+   - Total budget: ≤120 words for spoken voice answers so the candidate can scan it in 3 seconds while speaking.
+4. STAY USEFUL, SOLUTION FIRST:
+   - Lead directly with what to say or the answer. No preamble ("Sure!", "Here is...").`;
 
-### If the transcription is casual conversation, greetings, or NOT related to ${activeSkill}:
-- Respond with: "Yeah, I'm listening. Ask your question relevant to ${activeSkill}."
-- Or similar brief acknowledgments like: "I'm here, what's your ${activeSkill} question?"
-
-### If the transcription IS relevant to ${activeSkill} or is a follow-up question:
-- Provide a comprehensive, detailed response
-- Use bullet points, examples, and explanations
-- Focus on actionable insights and complete answers
-- Do not truncate or shorten your response
-
-### Examples of casual/irrelevant messages:
-- "Hello", "Hi there", "How are you?"
-- "What's the weather like?"
-- "I'm just testing this"
-- Random conversations not related to ${activeSkill}
-
-### Examples of relevant messages:
-- Actual questions about ${activeSkill} concepts
-- Follow-up questions to previous responses
-- Requests for clarification on ${activeSkill} topics
-- Problem-solving requests related to ${activeSkill}
-
-## Response Format:
-- Keep responses detailed
-- Use bullet points for structured answers
-- Be encouraging and helpful
-- Stay focused on ${activeSkill}
-
-If the user's input is a coding or DSA problem statement and contains no code, produce a complete, runnable solution in the selected programming language without asking for more details. Always include the final implementation in a properly tagged code block.
-
-Remember: Be intelligent about filtering - only provide detailed responses when the user actually needs help with ${activeSkill}.`;
-
-    return prompt;
+    return basePrompt + spokenRules;
   }
 
   formatUserMessage(text, activeSkill) {
@@ -862,26 +1014,40 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
    * {response, metadata} shape. Falls back to the non-streaming path on any
    * streaming failure so reliability is never worse than before.
    */
-  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, onDelta = null) {
+  async processTranscriptionWithIntelligentResponseStream(text, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}, onDelta = null) {
     if (!this.isInitialized) {
       throw new Error('LLM service not initialized. Check Gemini API key configuration.');
     }
 
+    let streamOptions = {};
+    let streamCallback = onDelta;
+    if (typeof options === 'function') {
+      streamCallback = options;
+      streamOptions = {};
+    } else if (options && typeof options === 'object') {
+      streamOptions = options;
+    }
+
     const startTime = Date.now();
     this.requestCount++;
+    const answerStyle = streamOptions.style || 'spoken';
+    const lockedSkill = streamOptions.lockedSkill || null;
+    const speaker = streamOptions.speaker || null;
 
     try {
-      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage);
+      const geminiRequest = this.buildIntelligentTranscriptionRequest(text, activeSkill, sessionMemory, programmingLanguage, streamOptions);
 
       const fullText = await this.executeStreamingRequest(geminiRequest, (delta) => {
-        if (typeof onDelta === 'function' && delta) {
-          onDelta(delta);
+        if (typeof streamCallback === 'function' && delta) {
+          streamCallback(delta);
         }
       });
 
       const finalResponse = programmingLanguage
         ? this.enforceProgrammingLanguage(fullText, programmingLanguage)
         : fullText;
+
+      this.checkDoctrineCompliance(finalResponse, 'transcription_streaming');
 
       logger.logPerformance('LLM transcription streaming', startTime, {
         activeSkill,
@@ -894,6 +1060,10 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         response: finalResponse,
         metadata: {
           skill: activeSkill,
+          skillConfidence: streamOptions.skillConfidence !== undefined ? streamOptions.skillConfidence : 0.8,
+          answerStyle,
+          speaker,
+          locked: !!lockedSkill,
           programmingLanguage,
           processingTime: Date.now() - startTime,
           requestId: this.requestCount,
@@ -907,9 +1077,8 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
         error: error.message,
         requestId: this.requestCount
       });
-      // Non-streaming path returns the same shape; the caller renders it as a
-      // single final response.
-      return this.processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory, programmingLanguage);
+      // Non-streaming path returns the same shape; the caller renders it as a single final response.
+      return this.processTranscriptionWithIntelligentResponse(text, activeSkill, sessionMemory, programmingLanguage, streamOptions);
     }
   }
 
@@ -1472,7 +1641,6 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       req.on('error', (error) => {
         reject(new Error(`Alternative request failed: ${error.message}`));
       });
-      
       req.on('timeout', () => {
         req.destroy();
         reject(new Error('Alternative request timeout'));
@@ -1481,6 +1649,107 @@ Remember: Be intelligent about filtering - only provide detailed responses when 
       req.write(postData);
       req.end();
     });
+  }
+
+  /**
+   * Doctrine sanity check (log-only, never block):
+   * Flag responses containing clarifying-question patterns so regressions in doctrine adherence are visible.
+   */
+  checkDoctrineCompliance(text, context = '') {
+    if (!text || typeof text !== 'string') {
+      return { compliant: true, matches: [] };
+    }
+    const clarifyingRegex = /^.*\b(can you (clarify|specify|tell me more)|which .* do you (mean|want)|do you mean)\b.*\?/im;
+    const match = text.match(clarifyingRegex);
+    if (match) {
+      logger.warn('⚠️ [DOCTRINE WARNING] Output contains a clarifying question to the candidate', {
+        context,
+        matchedSnippet: match[0]
+      });
+      return { compliant: false, matches: [match[0]] };
+    }
+    return { compliant: true, matches: [] };
+  }
+
+  /**
+   * Dispatch quick action button from overlay or chat.
+   * Action prompts inherit the CORE doctrine via promptLoader.buildSystemPrompt().
+   */
+  async dispatchAction({ actionId, lastInput = '', sessionHistory = [], activeSkill = 'dsa', codingLanguage = null, answerStyle = 'concise', onDelta = null }) {
+    if (!this.isInitialized) {
+      throw new Error('LLM service not initialized. Check Gemini API key configuration.');
+    }
+
+    const actionInstruction = skillRouterService.getActionPrompt(actionId);
+    if (!actionInstruction) {
+      throw new Error(`Unknown action ID: ${actionId}`);
+    }
+
+    const startTime = Date.now();
+    this.requestCount++;
+    const actionSkill = activeSkill || 'dsa';
+    const systemInstructionText = promptLoader.buildSystemPrompt(actionSkill, {
+      language: codingLanguage,
+      style: answerStyle
+    });
+
+    const sessionManager = require('../managers/session.manager');
+    let history = sessionHistory;
+    if ((!history || history.length === 0) && sessionManager && typeof sessionManager.getConversationHistory === 'function') {
+      history = sessionManager.getConversationHistory(10);
+    }
+
+    const request = { contents: [] };
+    this.applyGenerationDefaults(request);
+    if (systemInstructionText && systemInstructionText.trim().length > 0) {
+      request.systemInstruction = { parts: [{ text: systemInstructionText }] };
+    }
+
+    if (Array.isArray(history)) {
+      const convContents = history
+        .filter(event => event.role !== 'system' && event.content && typeof event.content === 'string' && event.content.trim().length > 0)
+        .slice(-8)
+        .map(event => ({
+          role: event.role === 'model' ? 'model' : 'user',
+          parts: [{ text: event.content.trim() }]
+        }));
+      request.contents.push(...convContents);
+    }
+
+    const actionPromptText = `[ACTION: ${actionId.toUpperCase()}]\n${actionInstruction}\n${lastInput ? `\nTarget context / previous solution:\n${lastInput}` : ''}`;
+    request.contents.push({
+      role: 'user',
+      parts: [{ text: actionPromptText }]
+    });
+
+    let fullText = '';
+    if (typeof onDelta === 'function') {
+      fullText = await this.executeStreamingRequest(request, onDelta);
+    } else {
+      fullText = await this.executeRequest(request);
+    }
+
+    const finalResponse = codingLanguage ? this.enforceProgrammingLanguage(fullText, codingLanguage) : fullText;
+    this.checkDoctrineCompliance(finalResponse, `action_${actionId}`);
+
+    logger.logPerformance(`LLM action dispatch: ${actionId}`, startTime, {
+      actionId,
+      skill: actionSkill,
+      programmingLanguage: codingLanguage || 'none',
+      requestId: this.requestCount
+    });
+
+    return {
+      response: finalResponse,
+      metadata: {
+        actionId,
+        skill: actionSkill,
+        programmingLanguage: codingLanguage,
+        answerStyle,
+        processingTime: Date.now() - startTime,
+        requestId: this.requestCount
+      }
+    };
   }
 }
 

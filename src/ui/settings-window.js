@@ -22,6 +22,8 @@ document.addEventListener('DOMContentLoaded', () => {
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
+    const interviewPresetSelect = document.getElementById('interviewPreset');
+    const answerStyleSelect = document.getElementById('answerStyle');
     const iconGrid = document.getElementById('iconGrid');
 
     // Check if window.api exists
@@ -101,6 +103,8 @@ document.addEventListener('DOMContentLoaded', () => {
         }
 
         if (settings.activeSkill && activeSkillSelect) activeSkillSelect.value = settings.activeSkill;
+        if (settings.interviewPreset && interviewPresetSelect) interviewPresetSelect.value = settings.interviewPreset;
+        if (settings.answerStyle && answerStyleSelect) answerStyleSelect.value = settings.answerStyle;
 
         // Handle icon selection
         const selectedIcon = settings.selectedIcon || settings.appIcon;
@@ -156,6 +160,8 @@ document.addEventListener('DOMContentLoaded', () => {
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
+        if (interviewPresetSelect) settings.interviewPreset = interviewPresetSelect.value;
+        if (answerStyleSelect) settings.answerStyle = answerStyleSelect.value;
         
         window.api.send('save-settings', settings);
     };
@@ -276,6 +282,26 @@ document.addEventListener('DOMContentLoaded', () => {
             saveSettings();
             // Also update the main window
             window.api.send('update-skill', e.target.value);
+        });
+    }
+
+    // Interview Preset handler
+    if (interviewPresetSelect) {
+        interviewPresetSelect.addEventListener('change', (e) => {
+            saveSettings();
+            if (window.electronAPI && window.electronAPI.setInterviewPreset) {
+                window.electronAPI.setInterviewPreset(e.target.value);
+            }
+        });
+    }
+
+    // Answer Style handler
+    if (answerStyleSelect) {
+        answerStyleSelect.addEventListener('change', (e) => {
+            saveSettings();
+            if (window.electronAPI && window.electronAPI.setAnswerStyle) {
+                window.electronAPI.setAnswerStyle(e.target.value);
+            }
         });
     }
 

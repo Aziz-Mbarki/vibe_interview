@@ -96,6 +96,8 @@ process.on("unhandledRejection", (reason) => {
 const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
+const { skillRouterService } = require("./src/services/skill-router.service");
+const { promptLoader } = require("./prompt-loader");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -106,8 +108,12 @@ class ApplicationController {
     this.isReady = false;
     this.starting = false;
     this.activeSkill = "dsa";
-  // Default to C++ so language is enforced from first run
-  this.codingLanguage = "cpp";
+    // Default to C++ so language is enforced from first run
+    this.codingLanguage = "cpp";
+    this.interviewPreset = process.env.INTERVIEW_PRESET || "full";
+    this.answerStyle = "auto";
+    this.lockedSkill = null;
+    this.lastInputBuffer = null;
     this.speechAvailable = false;
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
@@ -386,6 +392,31 @@ class ApplicationController {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+Alt+T (Test Always On Top)");
         const results = windowManager.testAlwaysOnTopForAllWindows();
         logger.info('Always-on-top test triggered via shortcut', results);
+      },
+      // New Phase 1 Hotkeys
+      "CommandOrControl+Shift+A": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+A (Area Screenshot)");
+        this.triggerScreenshotOCR({ isArea: true });
+      },
+      "CommandOrControl+Shift+Tab": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+Tab (Cycle Skill)");
+        this.navigateSkill(1);
+      },
+      "CommandOrControl+Shift+L": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+L (Lock/Unlock Skill)");
+        this.toggleSkillLock();
+      },
+      "CommandOrControl+Shift+Y": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+Y (Cycle Answer Style)");
+        this.cycleAnswerStyle();
+      },
+      "CommandOrControl+Shift+G": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+G (Copy Last Code)");
+        this.copyLastCodeBlock();
+      },
+      "CommandOrControl+Shift+E": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+E (Re-run Last Menu)");
+        windowManager.broadcastToAllWindows("show-rerun-menu");
       },
       // Context-sensitive shortcuts based on interaction mode
       "CommandOrControl+Up": () => this.handleUpArrow(),
@@ -839,8 +870,119 @@ class ApplicationController {
 
     ipcMain.handle("update-active-skill", (event, skill) => {
       this.activeSkill = skill;
-      windowManager.broadcastToAllWindows("skill-changed", { skill });
+      windowManager.broadcastToAllWindows("skill-changed", {
+        skill,
+        locked: !!this.lockedSkill,
+        lockedSkill: this.lockedSkill
+      });
       return { success: true };
+    });
+
+    ipcMain.handle("get-skills", () => {
+      return promptLoader.getAvailableSkills();
+    });
+
+    ipcMain.handle("set-interview-preset", (event, preset) => {
+      this.interviewPreset = preset || "full";
+      windowManager.broadcastToAllWindows("preset-changed", { preset: this.interviewPreset });
+      return { success: true, preset: this.interviewPreset };
+    });
+
+    ipcMain.handle("set-answer-style", (event, style) => {
+      this.answerStyle = style || "auto";
+      windowManager.broadcastToAllWindows("style-changed", { style: this.answerStyle });
+      return { success: true, style: this.answerStyle };
+    });
+
+    ipcMain.handle("set-skill-lock", (event, skillId) => {
+      this.lockedSkill = skillId || null;
+      if (this.lockedSkill) {
+        this.activeSkill = this.lockedSkill;
+      }
+      windowManager.broadcastToAllWindows("skill-changed", {
+        skill: this.activeSkill,
+        locked: !!this.lockedSkill,
+        lockedSkill: this.lockedSkill
+      });
+      return { success: true, locked: !!this.lockedSkill, lockedSkill: this.lockedSkill };
+    });
+
+    ipcMain.handle("rerun-last", async (event, { skill } = {}) => {
+      if (!this.lastInputBuffer) {
+        return { success: false, error: "No previous input to re-run" };
+      }
+      const targetSkill = skill || this.lockedSkill || this.activeSkill;
+      if (this.lastInputBuffer.kind === 'screenshot' && this.lastInputBuffer.imageBuffer) {
+        this.activeSkill = targetSkill;
+        windowManager.showLLMLoading();
+        const sessionHistory = sessionManager.getOptimizedHistory();
+        const needsLang = promptLoader.requiresProgrammingLanguage(targetSkill);
+        try {
+          const llmResult = await llmService.processImageWithSkillStream(
+            this.lastInputBuffer.imageBuffer,
+            this.lastInputBuffer.mimeType || 'image/png',
+            targetSkill,
+            sessionHistory.recent,
+            needsLang ? this.codingLanguage : null,
+            {
+              lockedSkill: targetSkill,
+              style: this.answerStyle === 'auto' ? null : this.answerStyle
+            },
+            (delta) => {
+              windowManager.broadcastToAllWindows("llm-response-chunk", { delta, isImage: true });
+            }
+          );
+          this.lastInputBuffer.lastResponse = llmResult.response;
+          windowManager.showLLMResponse(llmResult.response, llmResult.metadata);
+          this.broadcastLLMSuccess(llmResult);
+          return { success: true };
+        } catch (err) {
+          logger.error("Failed to rerun screenshot", { error: err.message });
+          windowManager.hideLLMResponse();
+          return { success: false, error: err.message };
+        }
+      } else if (this.lastInputBuffer.text) {
+        this.activeSkill = targetSkill;
+        const sessionHistory = sessionManager.getOptimizedHistory();
+        await this.processWithLLM(this.lastInputBuffer.text, sessionHistory);
+        return { success: true };
+      }
+      return { success: false, error: "No valid input buffer" };
+    });
+
+    ipcMain.handle("dispatch-action", async (event, { actionId }) => {
+      if (!actionId) return { success: false, error: "Missing actionId" };
+      try {
+        const lastContext = this.lastInputBuffer ? (this.lastInputBuffer.lastResponse || this.lastInputBuffer.text || "") : "";
+        windowManager.showLLMLoading();
+        const targetSkill = this.lockedSkill || this.activeSkill;
+        const needsLang = promptLoader.requiresProgrammingLanguage(targetSkill);
+        const result = await llmService.dispatchAction({
+          actionId,
+          lastInput: lastContext,
+          sessionHistory: sessionManager.getConversationHistory(10),
+          activeSkill: targetSkill,
+          codingLanguage: needsLang ? this.codingLanguage : null,
+          answerStyle: this.answerStyle === 'auto' ? 'concise' : this.answerStyle,
+          onDelta: (delta) => {
+            windowManager.broadcastToAllWindows("llm-response-chunk", { delta, isAction: true });
+          }
+        });
+        if (this.lastInputBuffer) {
+          this.lastInputBuffer.lastResponse = result.response;
+        }
+        windowManager.showLLMResponse(result.response, result.metadata);
+        this.broadcastLLMSuccess(result);
+        return { success: true, result };
+      } catch (err) {
+        logger.error("dispatch-action failed", { actionId, error: err.message });
+        windowManager.hideLLMResponse();
+        return { success: false, error: err.message };
+      }
+    });
+
+    ipcMain.handle("copy-last-code", () => {
+      return { success: this.copyLastCodeBlock() };
     });
 
     ipcMain.handle("restart-app-for-stealth", () => {
@@ -1018,44 +1160,89 @@ class ApplicationController {
   }
 
   navigateSkill(direction) {
-    const availableSkills = [
-      "dsa",
-    ];
-
+    const rawSkills = promptLoader.getAvailableSkills();
+    const availableSkills = rawSkills.map(s => (typeof s === 'string' ? s : s.id));
     const currentIndex = availableSkills.indexOf(this.activeSkill);
-    if (currentIndex === -1) {
-      logger.warn("Current skill not found in available skills", {
-        currentSkill: this.activeSkill,
-        availableSkills,
-      });
-      return;
-    }
-
-    // Calculate new index with wrapping
-    let newIndex = currentIndex + direction;
-    if (newIndex >= availableSkills.length) {
-      newIndex = 0; // Wrap to beginning
-    } else if (newIndex < 0) {
-      newIndex = availableSkills.length - 1; // Wrap to end
+    let newIndex = 0;
+    if (currentIndex !== -1) {
+      newIndex = currentIndex + direction;
+      if (newIndex >= availableSkills.length) {
+        newIndex = 0;
+      } else if (newIndex < 0) {
+        newIndex = availableSkills.length - 1;
+      }
     }
 
     const newSkill = availableSkills[newIndex];
     this.activeSkill = newSkill;
+    if (this.lockedSkill) {
+      this.lockedSkill = newSkill;
+    }
 
-    // Update session manager with the new skill
     sessionManager.setActiveSkill(newSkill);
 
     logger.info("Skill navigated via global shortcut", {
-      from: availableSkills[currentIndex],
+      from: currentIndex !== -1 ? availableSkills[currentIndex] : 'unknown',
       to: newSkill,
       direction: direction > 0 ? "down" : "up",
     });
 
-    // Broadcast the skill change to all windows
+    windowManager.broadcastToAllWindows("skill-changed", {
+      skill: newSkill,
+      locked: !!this.lockedSkill,
+      lockedSkill: this.lockedSkill
+    });
     windowManager.broadcastToAllWindows("skill-updated", { skill: newSkill });
   }
 
-  async triggerScreenshotOCR() {
+  toggleSkillLock() {
+    if (this.lockedSkill) {
+      this.lockedSkill = null;
+    } else {
+      this.lockedSkill = this.activeSkill;
+    }
+    logger.info("Skill lock toggled", { locked: !!this.lockedSkill, skill: this.lockedSkill });
+    windowManager.broadcastToAllWindows("skill-changed", {
+      skill: this.activeSkill,
+      locked: !!this.lockedSkill,
+      lockedSkill: this.lockedSkill
+    });
+    windowManager.broadcastToAllWindows("toast-notification", {
+      message: this.lockedSkill ? `🔒 Skill locked: ${this.lockedSkill}` : '🔓 Skill unlocked (Auto active)'
+    });
+  }
+
+  cycleAnswerStyle() {
+    const styles = ['auto', 'concise', 'structured', 'spoken', 'deep'];
+    const currIdx = styles.indexOf(this.answerStyle);
+    const nextIdx = (currIdx + 1) % styles.length;
+    this.answerStyle = styles[nextIdx];
+    logger.info("Answer style cycled", { style: this.answerStyle });
+    windowManager.broadcastToAllWindows("style-changed", { style: this.answerStyle });
+    windowManager.broadcastToAllWindows("toast-notification", {
+      message: `Style: ${this.answerStyle}`
+    });
+  }
+
+  copyLastCodeBlock() {
+    try {
+      const { clipboard } = require("electron");
+      const lastResponse = this.lastInputBuffer?.lastResponse || "";
+      const codeBlockMatch = lastResponse.match(/```(?:[a-zA-Z0-9_-]*)\n([\s\S]*?)```/);
+      const codeToCopy = codeBlockMatch ? codeBlockMatch[1].trim() : (lastResponse ? lastResponse.trim() : "");
+      if (codeToCopy) {
+        clipboard.writeText(codeToCopy);
+        logger.info("Copied code block to clipboard");
+        windowManager.broadcastToAllWindows("toast-notification", { message: "Code copied to clipboard!" });
+        return true;
+      }
+    } catch (e) {
+      logger.error("Failed to copy code block", { error: e.message });
+    }
+    return false;
+  }
+
+  async triggerScreenshotOCR(options = {}) {
     if (!this.isReady) {
       logger.warn("Screenshot requested before application ready");
       return;
@@ -1066,7 +1253,7 @@ class ApplicationController {
     try {
       windowManager.showLLMLoading();
 
-  const capture = await captureService.captureAndProcess();
+      const capture = await captureService.captureAndProcess(options);
 
       if (!capture.imageBuffer || !capture.imageBuffer.length) {
         windowManager.hideLLMResponse();
@@ -1074,35 +1261,75 @@ class ApplicationController {
         return;
       }
 
-      // Use image directly with LLM and active skill; do not send chat messages here
       const sessionHistory = sessionManager.getOptimizedHistory();
 
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      // Resolve skill via Router (considering user lock, preset, activeSkill)
+      const resolved = skillRouterService.resolveSkill({
+        lockedSkill: this.lockedSkill,
+        preset: this.interviewPreset,
+        activeSkill: this.activeSkill
+      });
+      const targetSkill = resolved.skill;
+      const needsProgrammingLanguage = promptLoader.requiresProgrammingLanguage(targetSkill);
 
-      const llmResult = await llmService.processImageWithSkill(
+      // Stream the answer so it renders progressively in the overlay
+      this._responseSeq = (this._responseSeq || 0) + 1;
+      const messageId = `img-${Date.now()}-${this._responseSeq}`;
+      windowManager.broadcastToAllWindows("llm-response-start", {
+        messageId,
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        isImage: true
+      });
+
+      const llmResult = await llmService.processImageWithSkillStream(
         capture.imageBuffer,
         capture.mimeType || 'image/png',
-        this.activeSkill,
+        targetSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null
+        needsProgrammingLanguage ? this.codingLanguage : null,
+        {
+          lockedSkill: this.lockedSkill,
+          style: this.answerStyle === 'auto' ? null : this.answerStyle
+        },
+        (delta) => {
+          windowManager.broadcastToAllWindows("llm-response-chunk", {
+            messageId,
+            delta,
+            isImage: true
+          });
+        }
       );
+
+      llmResult.metadata = {
+        ...llmResult.metadata,
+        messageId,
+        locked: !!this.lockedSkill
+      };
+
+      // Store in lastInputBuffer for quick actions / re-run
+      this.lastInputBuffer = {
+        kind: 'screenshot',
+        text: llmResult.response,
+        imageBuffer: capture.imageBuffer,
+        mimeType: capture.mimeType || 'image/png',
+        activeSkill: llmResult.metadata.skill,
+        lastResponse: llmResult.response
+      };
 
       // Record model response in session
       sessionManager.addModelResponse(llmResult.response, {
-        skill: this.activeSkill,
+        skill: llmResult.metadata.skill,
+        skillConfidence: llmResult.metadata.skillConfidence,
+        imageType: llmResult.metadata.imageType,
+        answerStyle: llmResult.metadata.answerStyle,
+        locked: !!this.lockedSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
         isImageAnalysis: true
       });
 
-      windowManager.showLLMResponse(llmResult.response, {
-        skill: this.activeSkill,
-        processingTime: llmResult.metadata.processingTime,
-        usedFallback: llmResult.metadata.usedFallback,
-        isImageAnalysis: true
-      });
-
+      windowManager.showLLMResponse(llmResult.response, llmResult.metadata);
       this.broadcastLLMSuccess(llmResult);
     } catch (error) {
       logger.error("Screenshot OCR process failed", {
@@ -1126,23 +1353,46 @@ class ApplicationController {
 
   async processWithLLM(text, sessionHistory) {
     try {
-      // Add user input to session memory
       sessionManager.addUserInput(text, 'llm_input');
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
+      // Resolve skill via Router
+      const resolved = skillRouterService.resolveSkill({
+        text,
+        lockedSkill: this.lockedSkill,
+        preset: this.interviewPreset,
+        activeSkill: this.activeSkill
+      });
+      const targetSkill = resolved.skill;
+      const needsProgrammingLanguage = promptLoader.requiresProgrammingLanguage(targetSkill);
       
       const llmResult = await llmService.processTextWithSkill(
         text,
-        this.activeSkill,
+        targetSkill,
         sessionHistory.recent,
-        needsProgrammingLanguage ? this.codingLanguage : null
+        needsProgrammingLanguage ? this.codingLanguage : null,
+        {
+          style: this.answerStyle === 'auto' ? null : this.answerStyle,
+          lockedSkill: this.lockedSkill
+        }
       );
+
+      llmResult.metadata = {
+        ...llmResult.metadata,
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        locked: !!this.lockedSkill
+      };
+
+      this.lastInputBuffer = {
+        kind: 'chat',
+        text,
+        activeSkill: targetSkill,
+        lastResponse: llmResult.response
+      };
 
       logger.info("LLM processing completed, showing response", {
         responseLength: llmResult.response.length,
-        skill: this.activeSkill,
+        skill: targetSkill,
         programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime,
         responsePreview: llmResult.response.substring(0, 200) + "...",
@@ -1150,17 +1400,15 @@ class ApplicationController {
 
       // Add LLM response to session memory
       sessionManager.addModelResponse(llmResult.response, {
-        skill: this.activeSkill,
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        answerStyle: llmResult.metadata.answerStyle,
+        locked: !!this.lockedSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
       });
 
-      windowManager.showLLMResponse(llmResult.response, {
-        skill: this.activeSkill,
-        processingTime: llmResult.metadata.processingTime,
-        usedFallback: llmResult.metadata.usedFallback,
-      });
-
+      windowManager.showLLMResponse(llmResult.response, llmResult.metadata);
       this.broadcastLLMSuccess(llmResult);
     } catch (error) {
       logger.error("LLM processing failed", {
@@ -1266,34 +1514,45 @@ class ApplicationController {
         return;
       }
 
+      // Resolve skill via Router
+      const resolved = skillRouterService.resolveSkill({
+        text: cleanText,
+        lockedSkill: this.lockedSkill,
+        preset: this.interviewPreset,
+        activeSkill: this.activeSkill
+      });
+      const targetSkill = resolved.skill;
+      const needsProgrammingLanguage = promptLoader.requiresProgrammingLanguage(targetSkill);
+
       logger.info("Processing transcription with intelligent LLM response", {
-        skill: this.activeSkill,
+        skill: targetSkill,
+        confidence: resolved.confidence,
         textLength: cleanText.length,
         textPreview: cleanText.substring(0, 100) + "..."
       });
 
-      // Check if current skill needs programming language context
-      const skillsRequiringProgrammingLanguage = ['dsa'];
-      const needsProgrammingLanguage = skillsRequiringProgrammingLanguage.includes(this.activeSkill);
-
       // Stream the answer so it renders progressively in the chat + overlay.
-      // A unique messageId ties the start/chunk/final events to one bubble so
-      // the UI never duplicates or interleaves concurrent responses.
       this._responseSeq = (this._responseSeq || 0) + 1;
       const messageId = `tr-${Date.now()}-${this._responseSeq}`;
       windowManager.broadcastToAllWindows("transcription-llm-response-start", {
         messageId,
-        skill: this.activeSkill
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        speaker: 'you'
       });
-      // Surface the overlay immediately so streamed tokens are visible there
-      // too, instead of the overlay only appearing once the full answer lands.
       windowManager.showLLMLoading();
 
       const llmResult = await llmService.processTranscriptionWithIntelligentResponseStream(
         cleanText,
-        this.activeSkill,
+        targetSkill,
         sessionHistory.recent,
         needsProgrammingLanguage ? this.codingLanguage : null,
+        {
+          style: this.answerStyle === 'auto' ? null : this.answerStyle,
+          lockedSkill: this.lockedSkill,
+          skillConfidence: resolved.confidence,
+          speaker: 'you'
+        },
         (delta) => {
           windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
             messageId,
@@ -1301,11 +1560,27 @@ class ApplicationController {
           });
         }
       );
-      llmResult.metadata = { ...llmResult.metadata, messageId };
+      llmResult.metadata = {
+        ...llmResult.metadata,
+        messageId,
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        locked: !!this.lockedSkill
+      };
+
+      this.lastInputBuffer = {
+        kind: 'transcription',
+        text: cleanText,
+        activeSkill: targetSkill,
+        lastResponse: llmResult.response
+      };
 
       // Add LLM response to session memory
       sessionManager.addModelResponse(llmResult.response, {
-        skill: this.activeSkill,
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        answerStyle: llmResult.metadata.answerStyle,
+        locked: !!this.lockedSkill,
         processingTime: llmResult.metadata.processingTime,
         usedFallback: llmResult.metadata.usedFallback,
         isTranscriptionResponse: true
@@ -1314,19 +1589,12 @@ class ApplicationController {
       // Send response to chat windows
       this.broadcastTranscriptionLLMResponse(llmResult);
 
-      // Also display in the overlay (LLM response) window so the answer
-      // appears in both the chat panel and the floating overlay, mirroring
-      // the behaviour of screenshot/image responses.
-      windowManager.showLLMResponse(llmResult.response, {
-        skill: this.activeSkill,
-        processingTime: llmResult.metadata.processingTime,
-        usedFallback: llmResult.metadata.usedFallback,
-        isTranscriptionResponse: true
-      });
+      // Also display in the overlay window
+      windowManager.showLLMResponse(llmResult.response, llmResult.metadata);
 
       logger.info("Transcription LLM response completed", {
         responseLength: llmResult.response.length,
-        skill: this.activeSkill,
+        skill: targetSkill,
         programmingLanguage: needsProgrammingLanguage ? this.codingLanguage : 'not applicable',
         processingTime: llmResult.metadata.processingTime
       });
@@ -1497,6 +1765,9 @@ class ApplicationController {
     return {
       codingLanguage: this.codingLanguage || "cpp",
       activeSkill: this.activeSkill || "dsa",
+      interviewPreset: this.interviewPreset || "full",
+      answerStyle: this.answerStyle || "auto",
+      lockedSkill: this.lockedSkill || null,
       appIcon: this.appIcon || "terminal",
       selectedIcon: this.appIcon || "terminal",
       windowGap: windowManager.windowGap,
@@ -1535,6 +1806,18 @@ class ApplicationController {
           skill: settings.activeSkill,
         });
       }
+      if (settings.interviewPreset) {
+        this.interviewPreset = settings.interviewPreset;
+        windowManager.broadcastToAllWindows("preset-changed", {
+          preset: settings.interviewPreset
+        });
+      }
+      if (settings.answerStyle) {
+        this.answerStyle = settings.answerStyle;
+        windowManager.broadcastToAllWindows("style-changed", {
+          style: settings.answerStyle
+        });
+      }
       if (settings.appIcon) {
         this.appIcon = settings.appIcon;
       }
@@ -1548,10 +1831,10 @@ class ApplicationController {
       }
 
       // ── Persist provider / API-key fields back to .env ──
-      // The settings UI is now the source of truth for these values.
-      // Writing to .env ensures they survive app restarts and are picked
-      // up the next time the app boots.
       const envUpdates = {};
+      if (settings.interviewPreset) {
+        envUpdates.INTERVIEW_PRESET = settings.interviewPreset;
+      }
       if (settings.speechProvider === "azure" || settings.speechProvider === "whisper" || settings.speechProvider === "groq") {
         envUpdates.SPEECH_PROVIDER = settings.speechProvider;
       }

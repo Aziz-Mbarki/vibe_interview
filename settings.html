@@ -325,11 +325,41 @@
                     </div>
                     <div class="settings-item">
                         <div>
+                            <div class="settings-item-label">Interview Preset</div>
+                            <div class="settings-item-description">Select your interview round type</div>
+                        </div>
+                        <select class="input-field" id="interviewPreset">
+                            <option value="full">Full Loop (Auto-Detect All Skills)</option>
+                            <option value="coding">Coding Round (DSA & Tech Q&A)</option>
+                            <option value="system-design">System Design Round</option>
+                            <option value="hr">HR / Behavioral Screen</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <div>
+                            <div class="settings-item-label">Answer Style</div>
+                            <div class="settings-item-description">Teleprompter card formatting</div>
+                        </div>
+                        <select class="input-field" id="answerStyle">
+                            <option value="auto">Auto (Skill Default)</option>
+                            <option value="concise">Concise (1-line verdict + bullets + code)</option>
+                            <option value="structured">Structured (Headers, Architecture, Trade-offs)</option>
+                            <option value="spoken">Spoken Script (Natural first-person bullets)</option>
+                            <option value="deep">Deep Dive (Comprehensive explanation)</option>
+                        </select>
+                    </div>
+                    <div class="settings-item">
+                        <div>
                             <div class="settings-item-label">Active Skill</div>
                             <div class="settings-item-description">Choose your current focus area</div>
                         </div>
                         <select class="input-field" id="activeSkill">
-                            <option value="dsa">Data Structures & Algorithms</option>
+                            <option value="auto">Auto-detect (Recommended)</option>
+                            <option value="dsa">Data Structures & Algorithms (DSA)</option>
+                            <option value="system-design">System Design</option>
+                            <option value="behavioral">HR / Behavioral</option>
+                            <option value="tech-qa">Technical Q&A / Debugging</option>
+                            <option value="general">General Fallback</option>
                         </select>
                     </div>
                 </div>
