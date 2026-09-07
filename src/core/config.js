@@ -40,11 +40,10 @@ class ConfigManager {
 
       llm: {
         gemini: {
-          // 'gemini-3.5-flash' is Google's current stable Flash model.
-          // 'gemini-3-flash-preview' is the fallback because it also has a
-          // free tier and is less likely to hit demand spikes.
-          model: 'gemini-3.5-flash',
-          fallbackModels: ['gemini-3-flash-preview', 'gemini-2.5-flash'],
+          // Default to gemini-3.5-flash-lite for fastest speed and generous quota.
+          // Fallback models allow graceful degradation if a model encounters high demand.
+          model: process.env.GEMINI_MODEL || 'gemini-3.5-flash-lite',
+          fallbackModels: ['gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-2.5-flash-lite'],
           maxRetries: 3,
           timeout: 60000,
           fallbackEnabled: true,

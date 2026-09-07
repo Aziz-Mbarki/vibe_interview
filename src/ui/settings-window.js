@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const whisperLanguageInput = document.getElementById('whisperLanguage');
     const whisperSegmentMsInput = document.getElementById('whisperSegmentMs');
     const geminiKeyInput = document.getElementById('geminiKey');
+    const geminiModelSelect = document.getElementById('geminiModel');
     const windowGapInput = document.getElementById('windowGap');
     const codingLanguageSelect = document.getElementById('codingLanguage');
     const activeSkillSelect = document.getElementById('activeSkill');
@@ -88,6 +89,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
+        if (geminiModelSelect) geminiModelSelect.value = settings.geminiModel || 'gemini-3.5-flash-lite';
         if (windowGapInput) windowGapInput.value = settings.windowGap || '';
 
         // Set C++ as default if no coding language is specified
@@ -147,6 +149,7 @@ document.addEventListener('DOMContentLoaded', () => {
         if (whisperLanguageInput) settings.whisperLanguage = whisperLanguageInput.value;
         if (whisperSegmentMsInput) settings.whisperSegmentMs = whisperSegmentMsInput.value;
         if (geminiKeyInput) settings.geminiKey = geminiKeyInput.value;
+        if (geminiModelSelect) settings.geminiModel = geminiModelSelect.value;
         if (windowGapInput) settings.windowGap = windowGapInput.value;
         if (codingLanguageSelect) settings.codingLanguage = codingLanguageSelect.value;
         if (activeSkillSelect) settings.activeSkill = activeSkillSelect.value;
@@ -203,6 +206,7 @@ document.addEventListener('DOMContentLoaded', () => {
         whisperLanguageInput,
         whisperSegmentMsInput,
         geminiKeyInput,
+        geminiModelSelect,
         windowGapInput
     ];
 

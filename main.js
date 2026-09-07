@@ -1512,6 +1512,7 @@ class ApplicationController {
       whisperLanguage: process.env.WHISPER_LANGUAGE || "en",
       whisperSegmentMs: process.env.WHISPER_SEGMENT_MS || "4000",
       geminiKey: process.env.GEMINI_API_KEY || "",
+      geminiModel: process.env.GEMINI_MODEL || config.get('llm.gemini.model') || "gemini-3.5-flash-lite",
 
       azureConfigured: !!process.env.AZURE_SPEECH_KEY && !!process.env.AZURE_SPEECH_REGION,
       groqConfigured: !!process.env.GROQ_API_KEY,
@@ -1584,6 +1585,9 @@ class ApplicationController {
       if (settings.geminiKey !== undefined) {
         envUpdates.GEMINI_API_KEY = settings.geminiKey;
       }
+      if (settings.geminiModel !== undefined) {
+        envUpdates.GEMINI_MODEL = settings.geminiModel;
+      }
 
       // Capture the previous whisper command BEFORE persisting — persistEnvUpdates
       // mutates process.env in place, so comparing afterwards would always read
@@ -1593,17 +1597,17 @@ class ApplicationController {
 
       const persistedKeys = this.persistEnvUpdates(envUpdates);
 
-      // If the Gemini key was just saved, reinitialize the LLM service
-      // so the new client picks up the key. Without this, the test-
-      // connection button in the onboarding wizard fails with
-      // "Service not initialized" because the client was first created
-      // at app startup, before any key was set.
-      if (settings.geminiKey !== undefined && envUpdates.GEMINI_API_KEY !== undefined) {
+      // If the Gemini key or model was just saved, reinitialize the LLM service
+      // so the new client picks up the new config immediately.
+      if ((settings.geminiKey !== undefined && envUpdates.GEMINI_API_KEY !== undefined) ||
+          (settings.geminiModel !== undefined && envUpdates.GEMINI_MODEL !== undefined)) {
         try {
           llmService.initializeClient();
-          logger.info("LLM service reinitialized after Gemini key update");
+          logger.info("LLM service reinitialized after Gemini settings update", {
+            model: llmService.model
+          });
         } catch (e) {
-          logger.warn("Failed to reinitialize LLM service after Gemini key update", {
+          logger.warn("Failed to reinitialize LLM service after Gemini settings update", {
             error: e.message
           });
         }
