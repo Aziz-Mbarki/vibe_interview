@@ -674,6 +674,8 @@ Always respond to the point, do not repeat the question or unnecessary informati
       prompt += `\n\nCODING CONTEXT: Respond ONLY in ${languageTitle}. All code blocks must use triple backticks with language tag \`\`\`${fenceTag}\`\`\`. Do not include other languages unless explicitly asked.`;
     }
 
+    prompt += `\n\nNATURAL LANGUAGE RULE: Automatically detect and respond in the same human language as the user's question or speech (e.g. if the user speaks French, reply in French; if Arabic, reply in Arabic; if English, reply in English). Code and implementations must always be written in the specified coding language.`;
+
     prompt += `
 
 ## Response Rules:

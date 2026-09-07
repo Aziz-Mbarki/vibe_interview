@@ -1615,10 +1615,12 @@ class ApplicationController {
 
       // Reinitialize speech service when provider, whisper command, or Groq settings change.
       const providerChanged = settings.speechProvider && speechService.provider !== settings.speechProvider;
-      const whisperCommandChanged = settings.whisperCommand !== undefined &&
-        prevWhisperCommand !== String(settings.whisperCommand || '');
+      const whisperSettingsChanged = whisperCommandChanged ||
+        settings.whisperModel !== undefined ||
+        settings.whisperLanguage !== undefined ||
+        settings.whisperSegmentMs !== undefined;
       const groqChanged = settings.groqApiKey !== undefined || settings.groqModel !== undefined || settings.groqLanguage !== undefined;
-      if (providerChanged || whisperCommandChanged || groqChanged) {
+      if (providerChanged || whisperSettingsChanged || groqChanged) {
         try {
           speechService.updateSettings(settings);
           this.speechAvailable = speechService.isAvailable

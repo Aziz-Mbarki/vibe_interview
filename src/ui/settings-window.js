@@ -10,6 +10,7 @@ document.addEventListener('DOMContentLoaded', () => {
     const groqApiKeyInput = document.getElementById('groqApiKey');
     const groqModelSelect = document.getElementById('groqModel');
     const groqLanguageInput = document.getElementById('groqLanguage');
+    const spokenLanguageSelect = document.getElementById('spokenLanguage');
     const azureKeyInput = document.getElementById('azureKey');
     const azureRegionInput = document.getElementById('azureRegion');
     const whisperCommandInput = document.getElementById('whisperCommand');
@@ -79,14 +80,16 @@ document.addEventListener('DOMContentLoaded', () => {
         // Always set the input value, even if empty, so the user sees what's
         // currently configured (including env-derived defaults). Previously
         // empty strings were skipped which left stale UI values.
+        const currentLang = settings.groqLanguage || settings.whisperLanguage || 'auto';
+        if (spokenLanguageSelect) spokenLanguageSelect.value = currentLang;
         if (groqApiKeyInput) groqApiKeyInput.value = settings.groqApiKey || '';
         if (groqModelSelect) groqModelSelect.value = settings.groqModel || 'whisper-large-v3-turbo';
-        if (groqLanguageInput) groqLanguageInput.value = settings.groqLanguage || 'auto';
+        if (groqLanguageInput) groqLanguageInput.value = settings.groqLanguage || currentLang;
         if (azureKeyInput) azureKeyInput.value = settings.azureKey || '';
         if (azureRegionInput) azureRegionInput.value = settings.azureRegion || '';
         if (whisperCommandInput) whisperCommandInput.value = settings.whisperCommand || '';
         if (whisperModelInput) whisperModelInput.value = settings.whisperModel || '';
-        if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || '';
+        if (whisperLanguageInput) whisperLanguageInput.value = settings.whisperLanguage || currentLang;
         if (whisperSegmentMsInput) whisperSegmentMsInput.value = settings.whisperSegmentMs || '';
         if (geminiKeyInput) geminiKeyInput.value = settings.geminiKey || '';
         if (geminiModelSelect) geminiModelSelect.value = settings.geminiModel || 'gemini-3.5-flash-lite';
@@ -196,6 +199,7 @@ document.addEventListener('DOMContentLoaded', () => {
     // Add event listeners for all inputs
     const inputs = [
         speechProviderSelect,
+        spokenLanguageSelect,
         groqApiKeyInput,
         groqModelSelect,
         groqLanguageInput,
@@ -216,6 +220,34 @@ document.addEventListener('DOMContentLoaded', () => {
             input.addEventListener('blur', saveSettings);
         }
     });
+
+    // Synchronize language dropdowns so selecting a language in one updates the others
+    if (spokenLanguageSelect) {
+        spokenLanguageSelect.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (groqLanguageInput) groqLanguageInput.value = val;
+            if (whisperLanguageInput) whisperLanguageInput.value = val;
+            saveSettings();
+        });
+    }
+
+    if (groqLanguageInput) {
+        groqLanguageInput.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (spokenLanguageSelect) spokenLanguageSelect.value = val;
+            if (whisperLanguageInput) whisperLanguageInput.value = val;
+            saveSettings();
+        });
+    }
+
+    if (whisperLanguageInput) {
+        whisperLanguageInput.addEventListener('change', (e) => {
+            const val = e.target.value;
+            if (spokenLanguageSelect) spokenLanguageSelect.value = val;
+            if (groqLanguageInput) groqLanguageInput.value = val;
+            saveSettings();
+        });
+    }
 
     if (speechProviderSelect) {
         speechProviderSelect.addEventListener('change', () => {

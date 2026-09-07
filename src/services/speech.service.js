@@ -2117,17 +2117,21 @@ class SpeechService extends EventEmitter {
     }
 
     const outputDir = fs.mkdtempSync(path.join(os.tmpdir(), 'opencluely-whisper-out-'));
+    const whisperLang = this._getWhisperLanguage();
     const args = [
       ...this.whisperCommand.baseArgs,
       audioFilePath,
       '--model', this._getWhisperModel(),
-      '--language', this._getWhisperLanguage(),
       '--task', 'transcribe',
       '--output_format', 'txt',
       '--output_dir', outputDir,
       '--verbose', 'False',
       '--fp16', 'False'
     ];
+
+    if (whisperLang && whisperLang !== 'auto') {
+      args.push('--language', whisperLang);
+    }
 
     if (this._getWhisperModelDir()) {
       args.push('--model_dir', this._getWhisperModelDir());
