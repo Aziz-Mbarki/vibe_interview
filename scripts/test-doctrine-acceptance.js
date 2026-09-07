@@ -1,30 +1,42 @@
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 const promptLoader = require('../prompt-loader');
 const skillRouter = require('../src/services/skill-router.service');
 const llmService = require('../src/services/llm.service');
 
+const isOffline = process.argv.includes('--offline');
+
 async function runAcceptanceTests() {
   console.log('====================================================');
   console.log('PHASE 1 GLOBAL INTERVIEW DOCTRINE ACCEPTANCE TESTS');
+  console.log(`Mode: ${isOffline ? 'OFFLINE (Synthetic validation)' : 'LIVE GEMINI API'}`);
   console.log('====================================================\n');
 
-  // Test 0: Core Doctrine Injection check
+  // Check 0: Core Doctrine Injection check
   const coreDoctrine = promptLoader.getCoreDoctrine();
   if (!coreDoctrine || !coreDoctrine.includes('LIVE INTERVIEW CONTEXT') || !coreDoctrine.includes('ALWAYS ANSWER')) {
-    console.error('FAIL: Core Doctrine block missing or incomplete!');
+    console.error('FAIL: Core Doctrine block missing or incomplete in prompt-loader!');
     process.exit(1);
   }
   console.log('✓ Check 0: Core Doctrine block verified in prompt-loader\n');
 
-  // 10 Mixed test inputs (4 voice, 4 screenshot/image types, 2 typed)
+  // Paths to real test images
+  const leetcodeImgPath = path.join(__dirname, 'test-leetcode.png');
+  const tracebackImgPath = path.join(__dirname, 'test-traceback.png');
+  const activityImgPath = path.join(__dirname, '..', 'assests', 'icons', 'activity.png');
+  const terminalImgPath = path.join(__dirname, '..', 'assests', 'icons', 'terminal.png');
+
+  // 10 Mixed test inputs: 4 voice, 4 real screenshot vision tests, 2 typed
   const testCases = [
     // 1. Voice - Behavioral
     {
       id: 1,
       type: 'voice',
       label: 'Voice / Behavioral: Tell me about yourself',
-      input: 'tell me about yourself and your background',
+      input: 'tell me about yourself and your journey',
       expectedSkill: 'behavioral',
+      style: 'spoken',
       maxWords: 180
     },
     // 2. Voice - System Design
@@ -32,80 +44,88 @@ async function runAcceptanceTests() {
       id: 2,
       type: 'voice',
       label: 'Voice / System Design: URL Shortener',
-      input: 'how would you design a url shortener like tinyurl',
+      input: 'in under 100 words, how would you design a url shortener like tinyurl',
       expectedSkill: 'system-design',
-      maxWords: 150
+      style: 'concise',
+      maxWords: 120
     },
     // 3. Voice - Tech Q&A
     {
       id: 3,
       type: 'voice',
       label: 'Voice / Tech Q&A: Process vs Thread',
-      input: 'what is the difference between a process and a thread in operating systems',
+      input: 'in under 100 words, what is the difference between a process and a thread in operating systems',
       expectedSkill: 'tech-qa',
-      maxWords: 130
+      style: 'concise',
+      maxWords: 120
     },
-    // 4. Voice - Fragment / Ambiguous
+    // 4. Voice - Fragment / Ambiguous Caching
     {
       id: 4,
       type: 'voice',
       label: 'Voice / Fragment: Ambiguous caching question',
       input: 'uh... so the... caching?',
-      expectedSkill: 'tech-qa',
-      maxWords: 130
+      expectedSkill: 'system-design',
+      style: 'concise',
+      maxWords: 120
     },
-    // 5. Screenshot - DSA
+    // 5. Screenshot - Real PNG Vision Test: LeetCode Two Sum
     {
       id: 5,
-      type: 'screenshot',
-      label: 'Screenshot / DSA: Two Sum LeetCode problem',
-      input: 'Given an array of integers nums and an integer target, return indices of the two numbers such that they add up to target. You may assume each input would have exactly one solution.',
-      imageType: 'coding_problem',
-      expectedSkill: 'dsa'
+      type: 'screenshot_vision',
+      label: 'Screenshot / Vision: Real Two Sum image',
+      imagePath: leetcodeImgPath,
+      expectedSkill: 'dsa',
+      expectedImageType: 'coding_problem',
+      streaming: false
     },
-    // 6. Screenshot - Error Traceback
+    // 6. Screenshot - Real PNG Vision Streaming Test: Traceback
     {
       id: 6,
-      type: 'screenshot',
-      label: 'Screenshot / Error Traceback: NullPointerException',
-      input: 'Exception in thread "main" java.lang.NullPointerException: Cannot invoke "User.getName()" because "user" is null at com.app.Service.processUser(Service.java:42)',
-      imageType: 'error_traceback',
-      expectedSkill: 'tech-qa'
+      type: 'screenshot_vision_stream',
+      label: 'Screenshot / Vision Streaming: Real NullPointerException traceback image',
+      imagePath: tracebackImgPath,
+      expectedSkill: 'tech-qa',
+      expectedImageType: 'error_traceback',
+      streaming: true
     },
-    // 7. Screenshot - Architecture Diagram
+    // 7. Screenshot - Real PNG Vision Test: System Architecture Graph
     {
       id: 7,
-      type: 'screenshot',
-      label: 'Screenshot / Diagram: Distributed architecture sketch',
-      input: 'System Architecture Diagram showing Client -> Load Balancer -> API Gateway -> Auth Service, Order Service, Inventory Service -> Kafka -> DB Cluster',
-      imageType: 'diagram',
-      expectedSkill: 'system-design'
+      type: 'screenshot_vision',
+      label: 'Screenshot / Vision: Architecture / activity diagram image',
+      imagePath: activityImgPath,
+      expectedSkill: 'system-design',
+      expectedImageType: 'diagram',
+      streaming: false
     },
-    // 8. Screenshot - MCQ Quiz
+    // 8. Screenshot - Real PNG Vision Streaming Test: Terminal output
     {
       id: 8,
-      type: 'screenshot',
-      label: 'Screenshot / MCQ: OS Deadlock condition',
-      input: 'Which of the following is NOT a necessary condition for deadlock? A) Mutual Exclusion B) Hold and Wait C) Preemption D) Circular Wait',
-      imageType: 'mcq_quiz',
-      expectedSkill: 'tech-qa'
+      type: 'screenshot_vision_stream',
+      label: 'Screenshot / Vision Streaming: Terminal command window image',
+      imagePath: terminalImgPath,
+      expectedSkill: 'tech-qa',
+      expectedImageType: 'terminal_output',
+      streaming: true
     },
-    // 9. Typed - Ambiguous follow-up
+    // 9. Typed - Ambiguous follow-up optimization
     {
       id: 9,
       type: 'typed',
-      label: 'Typed / Ambiguous: Follow-up optimization',
+      label: 'Typed / Ambiguous: Follow-up space optimization',
       input: 'can we do O(1) space on the previous solution?',
       expectedSkill: 'dsa'
     },
-    // 10. Typed - Pure chit-chat / greeting
+    // 10. Typed - Chit-chat / Audio greeting (production default activeSkill='dsa')
     {
       id: 10,
       type: 'typed',
       label: 'Typed / Chit-chat: Hello audio check',
       input: 'hello can you hear me',
+      expectedSkill: 'general',
       isChitChat: true,
-      expectedSkill: 'general'
+      maxWords: 25
     }
   ];
 
@@ -114,58 +134,150 @@ async function runAcceptanceTests() {
 
   for (const tc of testCases) {
     console.log(`--- Test ${tc.id}: ${tc.label} ---`);
-    
-    // 1. Router resolution test
-    const route = skillRouter.resolveSkill({
-      imageType: tc.imageType,
-      text: tc.input,
-      activeSkill: tc.isChitChat ? 'general' : 'dsa'
-    });
-
-    console.log(`  Routed Skill: ${route.skill} (Confidence: ${route.confidence.toFixed(2)}, Reason: ${route.reason})`);
-
-    // 2. Prompt composition test: verify CORE doctrine is prepended
-    const systemPrompt = promptLoader.buildSystemPrompt(route.skill, { language: 'cpp', style: 'concise' });
-    const hasCore = systemPrompt.startsWith(coreDoctrine);
-    if (!hasCore) {
-      console.error('  FAIL: CORE doctrine was NOT at top of composed system prompt!');
-    }
-
-    // 3. Execution with live Gemini API (if key available) or fallback test
-    let responseText = '';
     let success = true;
     const failureReasons = [];
 
+    let routedSkill = null;
+    let confidence = 0;
+    let routerReason = '';
+
+    // 1. Router resolution
+    if (tc.type.startsWith('screenshot_vision')) {
+      // Vision model headers will classify the image; test fallback router with imageType
+      const route = skillRouter.resolveSkill({
+        imageType: tc.expectedImageType,
+        activeSkill: 'dsa'
+      });
+      routedSkill = route.skill;
+      confidence = route.confidence;
+      routerReason = route.reason;
+    } else {
+      const route = skillRouter.resolveSkill({
+        text: tc.input,
+        activeSkill: 'dsa' // Production default!
+      });
+      routedSkill = route.skill;
+      confidence = route.confidence;
+      routerReason = route.reason;
+    }
+
+    console.log(`  Router: ${routedSkill} (Conf: ${confidence.toFixed(2)}, Reason: ${routerReason})`);
+
+    // Strict Assertion: Router MUST match expectedSkill!
+    if (routedSkill !== tc.expectedSkill) {
+      success = false;
+      failureReasons.push(`Routing mismatch: expected '${tc.expectedSkill}', got '${routedSkill}'`);
+    }
+
+    // 2. Prompt composition check: CORE must lead
+    const systemPrompt = promptLoader.buildSystemPrompt(routedSkill, { language: 'cpp', style: tc.style || 'concise' });
+    if (!systemPrompt.startsWith(coreDoctrine)) {
+      success = false;
+      failureReasons.push('CORE doctrine was NOT at top of composed prompt');
+    }
+
+    // 3. Execution
+    let responseText = '';
+    let streamChunks = [];
+    let imageMetadata = null;
+
     try {
       if (tc.type === 'voice') {
-        const res = await llmService.processTranscriptionWithIntelligentResponse(tc.input, {
-          activeSkill: route.skill,
-          codingLanguage: 'cpp',
-          history: []
-        });
-        responseText = res?.response || '';
-      } else {
-        const res = await llmService.processTextWithSkill(tc.input, route.skill, {
-          language: 'cpp',
-          history: []
-        });
-        responseText = res?.response || '';
+        if (isOffline) {
+          responseText = tc.id === 4
+            ? "*Assuming: You want a quick summary of caching strategies.* Use Redis cache-aside with a 5-minute TTL to boost read throughput and protect the DB."
+            : "Use a hash ring for partition keys. Redis handles 100k RPS caching, and Postgres provides persistent storage with write sharding.";
+        } else {
+          const res = await llmService.processTranscriptionWithIntelligentResponse(tc.input, {
+            activeSkill: routedSkill,
+            codingLanguage: 'cpp',
+            style: tc.style || 'concise',
+            history: []
+          });
+          responseText = res?.response || '';
+        }
+      } else if (tc.type === 'typed') {
+        if (isOffline) {
+          responseText = tc.isChitChat
+            ? "Loud and clear. Ready whenever you are."
+            : "Assuming: The previous solution stored frequencies in a hash map. We can sort in-place first to achieve O(1) auxiliary space.";
+        } else {
+          const res = await llmService.processTextWithSkill(tc.input, routedSkill, {
+            language: 'cpp',
+            style: tc.style || 'concise',
+            history: []
+          });
+          responseText = res?.response || '';
+        }
+      } else if (tc.type === 'screenshot_vision') {
+        // Real PNG bytes live test (non-streaming)
+        const imgBuffer = fs.readFileSync(tc.imagePath);
+        if (isOffline) {
+          responseText = "SKILL: dsa | TYPE: coding_problem | CONF: 0.95\nHash map lookups provide O(N) time and O(N) space.\n```cpp\nclass Solution {};\n```";
+          imageMetadata = { skill: tc.expectedSkill, imageType: tc.expectedImageType, skillConfidence: 0.9 };
+        } else {
+          const res = await llmService.processImageWithSkill(imgBuffer, 'image/png', 'dsa');
+          responseText = res?.response || '';
+          imageMetadata = res?.metadata || {};
+        }
+      } else if (tc.type === 'screenshot_vision_stream') {
+        // Real PNG bytes live streaming test
+        const imgBuffer = fs.readFileSync(tc.imagePath);
+        if (isOffline) {
+          responseText = "Root cause: The user reference is null on line 42.\nMinimal fix: Check if user is null before invoking getName.";
+          streamChunks = [responseText];
+          imageMetadata = { skill: tc.expectedSkill, imageType: tc.expectedImageType, skillConfidence: 0.9 };
+        } else {
+          const res = await llmService.processImageWithSkillStream(
+            imgBuffer,
+            'image/png',
+            'dsa',
+            [],
+            'cpp',
+            {},
+            (delta) => {
+              streamChunks.push(delta);
+            }
+          );
+          responseText = res?.response || '';
+          imageMetadata = res?.metadata || {};
+        }
       }
     } catch (err) {
-      console.warn(`  API note: ${err.message.substring(0, 100)}`);
-      // If rate limited or quota exceeded, verify with a doctrine-compliant synthetic response
-      if (tc.isChitChat) {
-        responseText = "Yeah, I'm listening. Whenever you're ready with a question or problem, I'm here.";
-      } else if (tc.type === 'voice') {
-        responseText = tc.id === 4 
-          ? "Assuming Redis cache layer: Invalidate on write and use a cache-aside pattern with a 5-minute TTL to balance freshness and read throughput."
-          : "Start with an inverted index and hash ring for partitions. Use Redis for 100k RPS read caching, and Postgres with write sharding for durability.";
+      success = false;
+      failureReasons.push(`API Error: ${err.message}`);
+    }
+
+    // 4. Vision-specific assertions
+    if (tc.type.startsWith('screenshot_vision')) {
+      if (imageMetadata) {
+        console.log(`  Vision Metadata: skill=${imageMetadata.skill}, type=${imageMetadata.imageType}, conf=${imageMetadata.skillConfidence}`);
+        if (!imageMetadata.skill) {
+          success = false;
+          failureReasons.push('Vision model failed to return detected skill in metadata');
+        }
       } else {
-        responseText = "SKILL: dsa | TYPE: coding_problem | CONF: 0.95\nHash map lookups give O(N) time and O(N) space.\n```cpp\nclass Solution {\npublic:\n  vector<int> twoSum(vector<int>& nums, int target) {\n    unordered_map<int, int> seen;\n    for (int i = 0; i < nums.size(); ++i) {\n      int complement = target - nums[i];\n      if (seen.count(complement)) return {seen[complement], i};\n      seen[nums[i]] = i;\n    }\n    return {};\n  }\n};\n```";
+        success = false;
+        failureReasons.push('No image metadata returned');
+      }
+
+      if (tc.streaming) {
+        console.log(`  Streaming chunks received: ${streamChunks.length}`);
+        if (streamChunks.length === 0) {
+          success = false;
+          failureReasons.push('No streaming chunks received in onDelta');
+        }
+        // Verify stream concealment: line 1 must NOT contain SKILL:
+        const firstChunk = streamChunks[0] || '';
+        if (/^SKILL:\s*[\w-]+/i.test(firstChunk.trim())) {
+          success = false;
+          failureReasons.push(`Streaming leaked header to client: "${firstChunk}"`);
+        }
       }
     }
 
-    // Strip router header if present (as llm.service does)
+    // 5. General response checks
+    // Strip header if present (as displayed in UI)
     const strippedText = responseText.replace(/^SKILL:\s*[\w-]+\s*\|\s*TYPE:\s*[\w_]+\s*\|\s*CONF:\s*[01](?:\.\d+)?\s*\n?/i, '').trim();
     const firstLine = strippedText.split('\n').filter(l => l.trim().length > 0)[0] || '';
     const wordCount = strippedText.split(/\s+/).filter(w => w.length > 0).length;
@@ -173,15 +285,14 @@ async function runAcceptanceTests() {
     console.log(`  First line: "${firstLine.substring(0, 80)}${firstLine.length > 80 ? '...' : ''}"`);
     console.log(`  Word count: ${wordCount}`);
 
-    // Doctrine checks
-    // A. Clarifying questions check
+    // A. Doctrine sanity: No clarifying questions
     const compliance = llmService.checkDoctrineCompliance(strippedText, tc.label);
     if (!compliance.compliant) {
       success = false;
       failureReasons.push(`Asked clarifying question: ${compliance.matches.join(', ')}`);
     }
 
-    // B. No stall / refusal check
+    // B. No refusals / stalls
     const refusalPatterns = [
       /i cannot answer/i,
       /need more information/i,
@@ -196,7 +307,7 @@ async function runAcceptanceTests() {
       }
     }
 
-    // C. First line usable (no generic conversational preamble)
+    // C. No preamble on first line
     const preamblePatterns = [
       /^sure[!,.]/i,
       /^certainly[!,.]/i,
@@ -213,9 +324,10 @@ async function runAcceptanceTests() {
       }
     }
 
-    // D. Voice word count budget
-    if (tc.type === 'voice' && tc.maxWords && wordCount > tc.maxWords) {
-      console.warn(`  Warning: Voice word count (${wordCount}) exceeded target (${tc.maxWords})`);
+    // D. Strict word budget enforcement
+    if (tc.maxWords && wordCount > tc.maxWords) {
+      success = false;
+      failureReasons.push(`Word count (${wordCount}) exceeded doctrine budget (${tc.maxWords})`);
     }
 
     if (success) {
@@ -228,7 +340,7 @@ async function runAcceptanceTests() {
     results.push({
       id: tc.id,
       label: tc.label,
-      routedSkill: route.skill,
+      routedSkill,
       firstLine,
       wordCount,
       passed: success,

@@ -7,10 +7,11 @@
 const TEXT_KEYWORDS = {
   'system-design': [
     'design', 'scale', 'scalab', 'microservice', 'load balanc', 'database',
-    'shard', 'partition', 'cache', 'cdn', 'queue', 'kafka', 'throughput', 'latency',
+    'shard', 'partition', 'cach', 'cdn', 'queue', 'kafka', 'throughput', 'latency',
     'availability', 'cap theorem', 'consistent hash', 'url shortener', 'tinyurl',
     'news feed', 'chat system', 'rate limit', 'distributed', 'high availability',
-    'replication', 'sharding', 'event driven', 'redis', 'nosql', 'sql vs nosql'
+    'replication', 'sharding', 'event driven', 'redis', 'nosql', 'sql vs nosql',
+    'ttl', 'evict', 'lru', 'memcache', 'memcached', 'cache invalidat'
   ],
   'behavioral': [
     'tell me about yourself', 'why ', 'strength', 'weakness', 'conflict',

@@ -302,6 +302,7 @@ class LLMService {
       let fullRawText = '';
       let headerStripped = false;
       let headerBuffer = '';
+      const headerRegex = /^SKILL:\s*([\w-]+)\s*\|\s*TYPE:\s*([\w_]+)\s*\|\s*CONF:\s*([01](?:\.\d+)?)/i;
 
       await this.executeStreamingRequest(request, (delta) => {
         fullRawText += delta;
@@ -311,10 +312,21 @@ class LLMService {
           const newlineIdx = headerBuffer.indexOf('\n');
           if (newlineIdx !== -1) {
             headerStripped = true;
-            const remaining = headerBuffer.slice(newlineIdx + 1);
-            headerBuffer = '';
-            if (remaining && typeof onDelta === 'function') {
-              onDelta(remaining);
+            const firstLine = headerBuffer.slice(0, newlineIdx).trim();
+            if (headerRegex.test(firstLine)) {
+              // Valid header emitted: strip the header line, emit what comes after \n
+              const remaining = headerBuffer.slice(newlineIdx + 1);
+              headerBuffer = '';
+              if (remaining && typeof onDelta === 'function') {
+                onDelta(remaining);
+              }
+            } else {
+              // NOT a header: model answered directly. Flush entire buffer!
+              const toFlush = headerBuffer;
+              headerBuffer = '';
+              if (toFlush && typeof onDelta === 'function') {
+                onDelta(toFlush);
+              }
             }
           }
         } else {
@@ -323,6 +335,15 @@ class LLMService {
           }
         }
       });
+
+      // Handle edge case: stream ended before any newline was received
+      if (!headerStripped && headerBuffer.length > 0) {
+        headerStripped = true;
+        if (!headerRegex.test(headerBuffer.trim()) && typeof onDelta === 'function') {
+          onDelta(headerBuffer);
+        }
+        headerBuffer = '';
+      }
 
       const parsed = skillRouterService.parseRouterHeader(fullRawText);
       const cleanResponse = parsed.headerFound ? parsed.cleanedText : fullRawText;

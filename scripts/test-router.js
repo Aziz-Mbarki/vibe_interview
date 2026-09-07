@@ -22,7 +22,10 @@ const testCases = [
   { input: "what is your greatest failure and how did you overcome it", expected: "behavioral" },
   { input: "how does garbage collection and event loop work in nodejs", expected: "tech-qa" },
   { input: "find median from data stream using max heap and min heap", expected: "dsa" },
-  { input: "how to implement consistent hashing for database sharding", expected: "system-design" }
+  { input: "how to implement consistent hashing for database sharding", expected: "system-design" },
+  { input: "uh... so the... caching?", expected: "system-design" },
+  { input: "how to configure redis ttl and eviction policies", expected: "system-design" },
+  { input: "what is lru caching strategy", expected: "system-design" }
 ];
 
 console.log('=== RUNNING SKILL ROUTER TEST SUITE ===\n');
