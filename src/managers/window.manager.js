@@ -195,6 +195,10 @@ class WindowManager {
     const window = await this.createWindow('main', false); // Don't show during creation
     this.windows.set('main', window);
 
+    window.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      logger.info(`[MAIN-CONSOLE] ${message} (line: ${line})`);
+    });
+
     // Always-on-top must be set even when we're deferring the visual
     // show — it persists into the future showOnCurrentDesktop call.
     if (process.platform === 'darwin') {
@@ -1093,7 +1097,7 @@ class WindowManager {
     }
   }
 
-  switchToWindow(windowType) {
+  async switchToWindow(windowType) {
     const chatWin = this.windows.get('chat');
     logger.info(`[WINDOW] switchToWindow entered for type: "${windowType}"`, {
       windowType,
@@ -1105,7 +1109,7 @@ class WindowManager {
       'isScreenBeingShared': this.isScreenBeingShared
     });
 
-    if (this.windows.has('chat') && this.windows.get('chat').isVisible() && windowType === 'chat') {
+    if (this.windows.has('chat') && this.windows.get('chat') && !this.windows.get('chat').isDestroyed() && this.windows.get('chat').isVisible() && windowType === 'chat') {
       logger.info(`[WINDOW] chat window is currently visible, hiding it for toggle test`);
       this.hideChatWindow();
       return;
@@ -1121,8 +1125,13 @@ class WindowManager {
       return;
     }
 
-    const targetWindow = this.windows.get(windowType);
-    if (targetWindow) {
+    let targetWindow = this.windows.get(windowType);
+    if ((!targetWindow || targetWindow.isDestroyed()) && windowType === 'chat') {
+      logger.info('[WINDOW] Chat window missing or destroyed, recreating...');
+      targetWindow = await this.createChatWindow();
+    }
+
+    if (targetWindow && !targetWindow.isDestroyed()) {
       logger.info(`[WINDOW] targetWindow "${windowType}" found. Bounds before show:`, targetWindow.getBounds());
       logger.info(`[STEP-LOG] BEFORE calling showOnCurrentDesktop("${windowType}")`);
       this.showOnCurrentDesktop(targetWindow);

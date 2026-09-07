@@ -672,6 +672,32 @@ class MainWindowUI {
     }
 
     /**
+     * Resample a mono Float32Array from inSampleRate to outSampleRate (e.g. 44.1k/48k -> 16k).
+     */
+    _resampleTo16k(inputData, inputRate, outputRate = 16000) {
+        if (!inputData || inputData.length === 0) return new Float32Array(0);
+        if (inputRate === outputRate) return inputData;
+        const ratio = inputRate / outputRate;
+        const newLength = Math.round(inputData.length / ratio);
+        const result = new Float32Array(newLength);
+        let offsetResult = 0;
+        let offsetBuffer = 0;
+        while (offsetResult < result.length) {
+            const nextOffsetBuffer = Math.round((offsetResult + 1) * ratio);
+            let accum = 0;
+            let count = 0;
+            for (let i = offsetBuffer; i < nextOffsetBuffer && i < inputData.length; i++) {
+                accum += inputData[i];
+                count++;
+            }
+            result[offsetResult] = count > 0 ? accum / count : (inputData[offsetBuffer] || 0);
+            offsetResult++;
+            offsetBuffer = nextOffsetBuffer;
+        }
+        return result;
+    }
+
+    /**
      * Capture microphone audio in the renderer using the Web Audio API.
      * This is used for Whisper on Windows where node-record-lpcm16's sox/rec
      * dependencies are unavailable.
@@ -680,48 +706,84 @@ class MainWindowUI {
         try {
             this._stopRendererAudioCapture();
 
-            const stream = await navigator.mediaDevices.getUserMedia({
-                audio: {
-                    echoCancellation: true,
-                    noiseSuppression: true,
-                    autoGainControl: true,
-                    sampleRate: { ideal: 16000 }
-                }
-            });
+            let stream;
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true,
+                        sampleRate: { ideal: 16000 }
+                    }
+                });
+            } catch (constraintErr) {
+                logger.warn('getUserMedia with constraints failed, retrying with basic audio: true', constraintErr);
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            }
             this._mediaStream = stream;
 
-            const audioContext = new (window.AudioContext || window.webkitAudioContext)({
-                sampleRate: 16000
-            });
+            let audioContext;
+            try {
+                audioContext = new (window.AudioContext || window.webkitAudioContext)({
+                    sampleRate: 16000
+                });
+            } catch (ctxErr) {
+                logger.warn('AudioContext(16000) failed, falling back to default sampleRate', ctxErr);
+                audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            }
             this._audioContext = audioContext;
+
+            if (audioContext.state === 'suspended') {
+                logger.info('AudioContext is suspended, resuming...');
+                await audioContext.resume();
+            }
+
+            const inputSampleRate = audioContext.sampleRate;
+            logger.info(`Renderer audio capture using AudioContext sampleRate: ${inputSampleRate}Hz, tracks: ${stream.getAudioTracks().length}`);
 
             const source = audioContext.createMediaStreamSource(stream);
             const bufferSize = 4096;
             const scriptNode = audioContext.createScriptProcessor(bufferSize, 1, 1);
             this._scriptNode = scriptNode;
 
+            let chunkCounter = 0;
             scriptNode.onaudioprocess = (event) => {
                 if (!this.isRecording || !window.electronAPI || !window.electronAPI.sendAudioChunk) {
                     return;
                 }
-                const inputData = event.inputBuffer.getChannelData(0);
+                const rawChannel = event.inputBuffer.getChannelData(0);
+                const inputData = this._resampleTo16k(rawChannel, inputSampleRate, 16000);
+
                 const pcm16 = new Int16Array(inputData.length);
+                let sumSquares = 0;
                 for (let i = 0; i < inputData.length; i++) {
                     const s = Math.max(-1, Math.min(1, inputData[i]));
                     pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                    sumSquares += s * s;
                 }
+                const rms = Math.sqrt(sumSquares / (inputData.length || 1));
+
+                chunkCounter++;
+                if (chunkCounter % 15 === 0 && rms > 0.005) {
+                    logger.debug(`[AudioCapture] Voice energy detected: RMS=${rms.toFixed(4)}`);
+                }
+
                 window.electronAPI.sendAudioChunk(pcm16.buffer);
             };
 
             source.connect(scriptNode);
             scriptNode.connect(audioContext.destination);
 
-            logger.info('Renderer audio capture started', { component: 'MainWindowUI' });
+            logger.info('Renderer audio capture started successfully', { component: 'MainWindowUI' });
         } catch (error) {
             logger.error('Failed to start renderer audio capture', {
                 component: 'MainWindowUI',
                 error: error.message
             });
+            if (this.micButton) {
+                this.micButton.classList.remove('recording');
+                this.micButton.title = `Mic Error: ${error.message}`;
+            }
             // Notify main process so it can stop the recording state
             try {
                 await window.electronAPI.stopSpeechRecognition();

@@ -915,6 +915,11 @@ class SpeechService extends EventEmitter {
         this.vadSpeaking = true;
         this.vadSpeechMs = 0;
         this.vadSilenceMs = 0;
+        logger.info('[VAD] Speech onset detected', {
+          energy: Number(energy.toFixed(4)),
+          threshold: Number(enterThreshold.toFixed(4)),
+          floor: Number(floor.toFixed(4))
+        });
         for (const pre of this.vadPreRoll) {
           this.segmentBuffers.push(pre);
           this.segmentBytes += pre.length;
@@ -954,6 +959,11 @@ class SpeechService extends EventEmitter {
     const tooLong = this.vadSpeechMs >= this._getMaxUtteranceMs();
 
     if ((pausedLongEnough && haveRealSpeech) || tooLong) {
+      logger.info('[VAD] Utterance ended naturally or capped, sending to STT', {
+        speechMs: Math.round(this.vadSpeechMs),
+        silenceMs: Math.round(this.vadSilenceMs),
+        bytes: this.segmentBytes
+      });
       this._endUtteranceFlush();
     } else if (pausedLongEnough && !haveRealSpeech) {
       // Just noise (cough/click) with no real speech — discard, don't waste a
@@ -1618,7 +1628,7 @@ class SpeechService extends EventEmitter {
   }
 
   _getVadEnergyFloor() {
-    return this._vadNumber('whisperVadEnergyFloor', 'WHISPER_VAD_ENERGY_FLOOR', 'speech.whisper.vadEnergyFloor', 0.008, 0.0005);
+    return this._vadNumber('whisperVadEnergyFloor', 'WHISPER_VAD_ENERGY_FLOOR', 'speech.whisper.vadEnergyFloor', 0.0035, 0.0005);
   }
 
   _getSetting(key) {

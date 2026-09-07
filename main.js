@@ -323,20 +323,19 @@ class ApplicationController {
   }
 
   setupPermissions() {
+    const allowedPermissions = ["microphone", "camera", "display-capture", "media"];
     session.defaultSession.setPermissionRequestHandler(
-      (webContents, permission, callback) => {
-        const allowedPermissions = ["microphone", "camera", "display-capture"];
+      (webContents, permission, callback, details) => {
         const granted = allowedPermissions.includes(permission);
-
-        logger.debug("Permission request", { permission, granted });
+        logger.info("Permission request", { permission, granted, details });
         callback(granted);
       }
     );
 
     session.defaultSession.setPermissionCheckHandler(
-      (webContents, permission) => {
-        const allowedPermissions = ["microphone", "camera", "display-capture"];
-        return allowedPermissions.includes(permission);
+      (webContents, permission, requestingOrigin, details) => {
+        const granted = allowedPermissions.includes(permission);
+        return granted;
       }
     );
   }
@@ -373,6 +372,10 @@ class ApplicationController {
       },
       "Alt+R": () => {
         logger.info("[GLOBAL-HOTKEY] Triggered: Alt+R (Toggle Speech)");
+        this.toggleSpeechRecognition();
+      },
+      "CommandOrControl+Shift+R": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+R (Toggle Speech)");
         this.toggleSpeechRecognition();
       },
       "CommandOrControl+Shift+T": () => {
