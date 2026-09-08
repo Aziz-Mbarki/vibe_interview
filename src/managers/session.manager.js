@@ -271,6 +271,22 @@ class SessionManager {
       .slice(-n);
   }
 
+  /**
+   * Get recent transcript turns for context bridging
+   * @param {number} n - Number of utterances/turns
+   */
+  getRecentTranscript(n = 20) {
+    return this.sessionMemory
+      .filter(event => (event.role === 'user' || event.role === 'assistant' || event.action?.includes('transcription') || event.action === 'user_speech') && !event.metadata?.isInitialization)
+      .slice(-n)
+      .map(event => ({
+        role: event.role || 'user',
+        content: event.content || event.primaryContent || '',
+        timestamp: event.timestamp,
+        speaker: event.metadata?.speaker || (event.role === 'assistant' ? 'assistant' : 'them')
+      }));
+  }
+
   addEvent(action, details = {}) {
     const event = this.createEvent(action, details);
     this.sessionMemory.push(event);

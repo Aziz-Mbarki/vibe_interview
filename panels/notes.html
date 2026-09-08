@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Notes</title>
+  <link rel="stylesheet" href="../src/styles/tokens.css">
+  <link rel="stylesheet" href="../src/styles/panel.css">
+  <link rel="stylesheet" href="../node_modules/@fortawesome/fontawesome-free/css/all.min.css">
+  <style>
+    .notes-layout {
+      display: flex;
+      height: 100%;
+      overflow: hidden;
+      gap: 12px;
+    }
+    .notes-sidebar {
+      width: 220px;
+      flex: 0 0 220px;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid var(--border-1);
+      padding-right: 12px;
+      gap: 8px;
+    }
+    .notes-search {
+      background: var(--surface-3);
+      border: 1px solid var(--border-1);
+      border-radius: var(--r-pill);
+      padding: 6px 12px;
+      color: var(--text-0);
+      font: 500 11px var(--font);
+      outline: none;
+      width: 100%;
+    }
+    .notes-search:focus {
+      border-color: var(--accent);
+    }
+    .notes-list {
+      flex: 1;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .note-item {
+      padding: 8px 10px;
+      border-radius: 8px;
+      background: transparent;
+      cursor: pointer;
+      transition: var(--t);
+      border: 1px solid transparent;
+    }
+    .note-item:hover {
+      background: var(--surface-2);
+    }
+    .note-item.is-active {
+      background: var(--surface-3);
+      border-color: var(--border-1);
+    }
+    .note-item-title {
+      font-weight: 600;
+      font-size: 12px;
+      color: var(--text-0);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .note-item-date {
+      font-size: 10px;
+      color: var(--text-3);
+      margin-top: 2px;
+    }
+    .notes-main {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .notes-toolbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .note-title-input {
+      background: transparent;
+      border: 0;
+      border-bottom: 1px solid var(--border-0);
+      font: 700 16px/1.3 var(--font);
+      color: var(--text-0);
+      padding: 4px 0;
+      outline: none;
+      width: 100%;
+      margin-bottom: 10px;
+    }
+    .note-title-input:focus {
+      border-bottom-color: var(--accent);
+    }
+    .note-editor {
+      flex: 1;
+      background: var(--surface-2);
+      border: 1px solid var(--border-1);
+      border-radius: var(--r-card);
+      padding: 14px;
+      color: var(--text-0);
+      font: 400 13px/1.65 var(--font);
+      overflow-y: auto;
+      outline: none;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .note-editor:focus {
+      border-color: rgba(255, 255, 255, 0.2);
+    }
+    .btn-sm {
+      height: 26px;
+      padding: 0 10px;
+      border-radius: var(--r-pill);
+      background: var(--surface-3);
+      border: 1px solid var(--border-1);
+      color: var(--text-2);
+      font: 600 11px/1 var(--font);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      transition: var(--t);
+    }
+    .btn-sm:hover {
+      background: var(--surface-2);
+      color: var(--text-0);
+    }
+    .btn-sm.is-accent {
+      background: var(--accent);
+      color: #052e16;
+      border: 0;
+    }
+  </style>
+</head>
+<body>
+  <section class="panel">
+    <header class="panel-head">
+      <div class="panel-title"><i class="fas fa-note-sticky"></i> Notes</div>
+      <div class="spacer"></div>
+      <span class="chip" id="quotaChip"><b>5h</b><i>|</i><span>0%</span><i>|</i><span>rest 4h55m</span></span>
+      <button class="hub-icon" id="btnDetach" title="Detach panel"><i class="fas fa-up-right-from-square"></i></button>
+      <button class="hub-icon" id="btnClose" title="Close panel"><i class="fas fa-xmark"></i></button>
+    </header>
+
+    <div class="panel-body" style="padding: 12px;">
+      <div class="notes-layout">
+        <!-- Left Sidebar: Note List -->
+        <aside class="notes-sidebar">
+          <button class="btn-sm is-accent" id="btnNewNote" style="width: 100%; justify-content: center;">
+            <i class="fas fa-plus"></i> New Note
+          </button>
+          <input type="text" class="notes-search" id="searchNotes" placeholder="Search notes…">
+          <div class="notes-list" id="notesList">
+            <!-- Rendered note items -->
+          </div>
+        </aside>
+
+        <!-- Right Main: Editor -->
+        <main class="notes-main">
+          <div class="notes-toolbar">
+            <div style="display: flex; gap: 6px;">
+              <button class="btn-sm" id="btnCopy" title="Copy to clipboard"><i class="fas fa-copy"></i> Copy</button>
+              <button class="btn-sm" id="btnMarkdown" title="Export as Markdown"><i class="fas fa-file-arrow-down"></i> Markdown</button>
+              <button class="btn-sm" id="btnPdf" title="Export as PDF"><i class="fas fa-file-pdf"></i> PDF</button>
+              <button class="btn-sm" id="btnEmail" title="Share via Email"><i class="fas fa-envelope"></i> Email</button>
+            </div>
+            <button class="btn-sm" id="btnDelete" style="color:var(--danger);" title="Delete note"><i class="fas fa-trash"></i></button>
+          </div>
+
+          <input type="text" class="note-title-input" id="noteTitle" placeholder="Note title…">
+          <div class="note-editor" id="noteEditor" contenteditable="true" placeholder="Start typing your note…"></div>
+        </main>
+      </div>
+    </div>
+
+    <div class="activity" id="activity">
+      <span class="pulse"></span>
+      <span id="activityText">Idle</span>
+    </div>
+  </section>
+
+  <script>
+    const electron = window.electronAPI;
+    let notes = [];
+    let currentNote = null;
+    let saveTimeout = null;
+    let isDetached = false;
+
+    const notesList = document.getElementById('notesList');
+    const noteTitle = document.getElementById('noteTitle');
+    const noteEditor = document.getElementById('noteEditor');
+    const searchNotes = document.getElementById('searchNotes');
+
+    // Detach / Close
+    document.getElementById('btnDetach')?.addEventListener('click', async () => {
+      isDetached = !isDetached;
+      const icon = document.querySelector('#btnDetach i');
+      if (isDetached) {
+        if (electron && electron.detachPanel) await electron.detachPanel('notes');
+        if (icon) icon.className = 'fas fa-arrow-down-left-and-up-right-to-center';
+      } else {
+        if (electron && electron.attachPanel) await electron.attachPanel('notes');
+        if (icon) icon.className = 'fas fa-up-right-from-square';
+      }
+    });
+
+    document.getElementById('btnClose')?.addEventListener('click', async () => {
+      if (electron && electron.setActivePanel) await electron.setActivePanel(null);
+    });
+
+    async function loadNotes() {
+      if (!electron?.notes?.list) return;
+      try {
+        notes = await electron.notes.list();
+        renderNotesList();
+        if (notes.length > 0 && !currentNote) {
+          selectNote(notes[0].id);
+        }
+      } catch (e) {
+        console.error('Failed to load notes', e);
+      }
+    }
+
+    function renderNotesList() {
+      const q = (searchNotes.value || '').toLowerCase();
+      notesList.innerHTML = '';
+      const filtered = notes.filter(n => (n.title || '').toLowerCase().includes(q) || (n.summary || '').toLowerCase().includes(q));
+
+      if (filtered.length === 0) {
+        notesList.innerHTML = '<div style="color:var(--text-3); font-size:11px; padding:12px; text-align:center;">No notes found</div>';
+        return;
+      }
+
+      filtered.forEach(n => {
+        const item = document.createElement('div');
+        item.className = `note-item ${currentNote && currentNote.id === n.id ? 'is-active' : ''}`;
+        item.innerHTML = `
+          <div class="note-item-title">${escapeHtml(n.title || 'Untitled Note')}</div>
+          <div class="note-item-date">${new Date(n.createdAt).toLocaleDateString()}</div>
+        `;
+        item.addEventListener('click', () => selectNote(n.id));
+        notesList.appendChild(item);
+      });
+    }
+
+    async function selectNote(id) {
+      if (!electron?.notes?.get) return;
+      try {
+        const note = await electron.notes.get(id);
+        if (note) {
+          currentNote = note;
+          noteTitle.value = note.title || '';
+          noteEditor.innerText = note.body || (note.summary ? `# Summary\n${note.summary}` : '');
+          renderNotesList();
+        }
+      } catch (e) {
+        console.error('Failed to get note', e);
+      }
+    }
+
+    // Auto-save debounced 500ms
+    function queueSave() {
+      if (saveTimeout) clearTimeout(saveTimeout);
+      saveTimeout = setTimeout(async () => {
+        if (!currentNote) {
+          currentNote = {
+            id: `note_${Date.now()}`,
+            title: noteTitle.value || 'Untitled Note',
+            body: noteEditor.innerText || '',
+            createdAt: Date.now()
+          };
+        } else {
+          currentNote.title = noteTitle.value || 'Untitled Note';
+          currentNote.body = noteEditor.innerText || '';
+        }
+        if (electron?.notes?.save) {
+          await electron.notes.save(currentNote);
+          const idx = notes.findIndex(n => n.id === currentNote.id);
+          if (idx >= 0) {
+            notes[idx].title = currentNote.title;
+          } else {
+            notes.unshift({ id: currentNote.id, title: currentNote.title, createdAt: currentNote.createdAt });
+          }
+          renderNotesList();
+        }
+      }, 500);
+    }
+
+    noteTitle?.addEventListener('input', queueSave);
+    noteEditor?.addEventListener('input', queueSave);
+    searchNotes?.addEventListener('input', renderNotesList);
+
+    // New note
+    document.getElementById('btnNewNote')?.addEventListener('click', () => {
+      currentNote = {
+        id: `note_${Date.now()}`,
+        title: 'New Note',
+        body: '',
+        createdAt: Date.now()
+      };
+      noteTitle.value = currentNote.title;
+      noteEditor.innerText = '';
+      notes.unshift({ id: currentNote.id, title: currentNote.title, createdAt: currentNote.createdAt });
+      renderNotesList();
+      queueSave();
+    });
+
+    // Delete
+    document.getElementById('btnDelete')?.addEventListener('click', async () => {
+      if (!currentNote || !electron?.notes?.remove) return;
+      if (confirm('Delete this note?')) {
+        await electron.notes.remove(currentNote.id);
+        notes = notes.filter(n => n.id !== currentNote.id);
+        currentNote = notes.length > 0 ? notes[0] : null;
+        if (currentNote) selectNote(currentNote.id);
+        else {
+          noteTitle.value = '';
+          noteEditor.innerText = '';
+          renderNotesList();
+        }
+      }
+    });
+
+    // Exports
+    document.getElementById('btnCopy')?.addEventListener('click', async () => {
+      if (!currentNote || !electron?.notes?.export) return;
+      const res = await electron.notes.export(currentNote.id, 'copy');
+      if (res?.text && electron.copyToClipboard) {
+        await electron.copyToClipboard(res.text);
+        alert('Note copied to clipboard!');
+      }
+    });
+
+    document.getElementById('btnMarkdown')?.addEventListener('click', async () => {
+      if (!currentNote || !electron?.notes?.export) return;
+      await electron.notes.export(currentNote.id, 'markdown');
+    });
+
+    document.getElementById('btnPdf')?.addEventListener('click', async () => {
+      if (!currentNote || !electron?.notes?.export) return;
+      await electron.notes.export(currentNote.id, 'pdf');
+    });
+
+    document.getElementById('btnEmail')?.addEventListener('click', async () => {
+      if (!currentNote || !electron?.notes?.export) return;
+      await electron.notes.export(currentNote.id, 'email');
+    });
+
+    // Activity & Quota
+    if (electron) {
+      electron.onQuota?.((data) => {
+        if (!data) return;
+        const chip = document.getElementById('quotaChip');
+        if (chip) chip.innerHTML = `<b>${data.total || '5h'}</b><i>|</i><span>${data.pct || '0%'}</span><i>|</i><span>${data.rest || 'rest 4h55m'}</span>`;
+      });
+
+      electron.onBlackout?.((on) => {
+        document.documentElement.classList.toggle('blackout', !!on);
+      });
+    }
+
+    function escapeHtml(str) {
+      return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    loadNotes();
+  </script>
+</body>
+</html>

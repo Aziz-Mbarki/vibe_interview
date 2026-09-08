@@ -96,8 +96,11 @@ process.on("unhandledRejection", (reason) => {
 const captureService = require("./src/services/capture.service");
 const speechService = require("./src/services/speech.service");
 const llmService = require("./src/services/llm.service");
+const notesService = require("./src/services/notes.service");
 const { skillRouterService } = require("./src/services/skill-router.service");
 const { promptLoader } = require("./prompt-loader");
+const { TurnAggregator } = require("./src/services/turn-aggregator");
+const intentGate = require("./src/services/intent-gate");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -115,6 +118,22 @@ class ApplicationController {
     this.lockedSkill = null;
     this.lastInputBuffer = null;
     this.speechAvailable = false;
+
+    // Phase 2 Autopilot state
+    this.isAutopilotEnabled = true;
+    this.isInterviewMode = false;
+    this.autopilotAggressiveness = "balanced";
+    this.lastSpokenQuestion = null;
+    this._speculativeAbortController = null;
+
+    // Turn Aggregator: coalesces fragments into single turns
+    this.turnAggregator = new TurnAggregator(
+      (turn) => this.handleAggregatedTurn(turn),
+      {
+        onSpeculativeStart: (firstFragment) => this.handleSpeculativeStart(firstFragment),
+        onSpeculativeCancel: () => this.handleSpeculativeCancel()
+      }
+    );
 
     // Utterance coalescing: VAD emits a transcript per natural pause, but a
     // single spoken question can still arrive as a few fragments (mid-thought
@@ -295,6 +314,9 @@ class ApplicationController {
       });
 
       sessionManager.addEvent("Application started");
+      notesService.autoClean().catch((err) => {
+        logger.warn("Notes autoClean error on startup", { error: err.message });
+      });
     } catch (error) {
       this.starting = false;
       logger.error("Application initialization failed", {
@@ -360,6 +382,10 @@ class ApplicationController {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+I (Toggle Interaction)");
         windowManager.toggleInteraction();
       },
+      "CommandOrControl+Shift+B": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+B (Toggle Blackout)");
+        windowManager.blackout(!windowManager.isBlackout);
+      },
       "CommandOrControl+Shift+C": () => {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+C (Switch To Chat)");
         windowManager.switchToWindow("chat");
@@ -371,10 +397,6 @@ class ApplicationController {
       "CommandOrControl+,": () => {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+, (Settings)");
         windowManager.showSettings();
-      },
-      "Alt+A": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+A (Toggle Interaction)");
-        windowManager.toggleInteraction();
       },
       "Alt+R": () => {
         logger.info("[GLOBAL-HOTKEY] Triggered: Alt+R (Toggle Speech)");
@@ -393,7 +415,7 @@ class ApplicationController {
         const results = windowManager.testAlwaysOnTopForAllWindows();
         logger.info('Always-on-top test triggered via shortcut', results);
       },
-      // New Phase 1 Hotkeys
+      // Phase 1 Hotkeys
       "CommandOrControl+Shift+A": () => {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+Shift+A (Area Screenshot)");
         this.triggerScreenshotOCR({ isArea: true });
@@ -423,11 +445,93 @@ class ApplicationController {
       "CommandOrControl+Down": () => this.handleDownArrow(),
       "CommandOrControl+Left": () => this.handleLeftArrow(),
       "CommandOrControl+Right": () => this.handleRightArrow(),
+
+      // Phase 2 Left-Hand Autopilot Chords
+      "Alt+Space": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Space (Panic Hide/Show)");
+        windowManager.togglePanic();
+      },
+      "Alt+A": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+A (Toggle Autopilot)");
+        this.toggleAutopilot();
+      },
+      "Alt+S": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+S (Capture Screen -> Answer)");
+        this.triggerAutopilotScreenCapture();
+      },
+      "Alt+D": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+D (Re-answer Deeper)");
+        this.dispatchLastAnswerAction('deep');
+      },
+      "Alt+F": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+F (Re-answer Shorter)");
+        this.dispatchLastAnswerAction('shorter');
+      },
+      "Alt+C": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+C (Copy Code Block)");
+        this.copyLastCodeBlock();
+      },
+      "Alt+Down": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Down (Prompter Expand More)");
+        windowManager.broadcastToAllWindows("prompter:action", "toggle-more");
+      },
+      "Alt+Up": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Up (Prompter Collapse Summary)");
+        windowManager.broadcastToAllWindows("prompter:action", "close-more");
+      },
+      "Alt+Left": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Left (Prompter Prev Answer)");
+        windowManager.broadcastToAllWindows("prompter:action", "prev");
+      },
+      "Alt+Right": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Right (Prompter Next Answer)");
+        windowManager.broadcastToAllWindows("prompter:action", "next");
+      },
+      "Alt+B": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+B (Toggle Blackout)");
+        windowManager.blackout(!windowManager.isBlackout);
+      },
+      "Alt+1": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+1 (Opacity 30%)");
+        windowManager.setGlobalOpacity(0.3);
+      },
+      "Alt+2": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+2 (Opacity 60%)");
+        windowManager.setGlobalOpacity(0.6);
+      },
+      "Alt+3": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+3 (Opacity 100%)");
+        windowManager.setGlobalOpacity(1.0);
+      },
+      "Alt+W": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+W (Push-to-Ask Whisper)");
+        this.handlePushToAsk();
+      },
+      "Alt+I": () => {
+        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+I (Interview Mode Toggle)");
+        this.toggleInterviewMode();
+      }
     };
 
     Object.entries(shortcuts).forEach(([accelerator, handler]) => {
-      const success = globalShortcut.register(accelerator, handler);
-      const isRegistered = globalShortcut.isRegistered(accelerator);
+      let success = false;
+      try {
+        success = globalShortcut.register(accelerator, handler);
+      } catch (err) {
+        logger.warn(`Failed initial registration for ${accelerator}`, { error: err.message });
+      }
+
+      // Fallback for Alt+Space -> Alt+Q if system conflict
+      if (!success && accelerator === "Alt+Space") {
+        try {
+          success = globalShortcut.register("Alt+Q", handler);
+          if (success) {
+            logger.info("Registered fallback Alt+Q for Panic Hide/Show (Alt+Space was occupied)");
+          }
+        } catch (_) {}
+      }
+
+      const isRegistered = globalShortcut.isRegistered(accelerator) || (accelerator === "Alt+Space" && globalShortcut.isRegistered("Alt+Q"));
       logger.info("Global shortcut registered", { accelerator, success, isRegistered });
     });
   }
@@ -439,10 +543,29 @@ class ApplicationController {
       });
     });
 
-    speechService.on("recording-stopped", () => {
+    speechService.on("recording-stopped", async () => {
       BrowserWindow.getAllWindows().forEach((window) => {
         window.webContents.send("recording-stopped");
       });
+
+      // Auto-generate session note if session contains conversational turns
+      try {
+        const turns = sessionManager.getRecentTranscript(40);
+        if (turns && turns.length >= 2) {
+          const transcriptText = turns.map(t => `**[${(t.speaker || t.role).toUpperCase()}]**: ${t.content}`).join('\n\n');
+          const autoNote = {
+            id: `session-${Date.now()}`,
+            title: `Session ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+            createdAt: new Date().toISOString(),
+            content: `## Conversation Record\n\n${transcriptText}\n\n### Summary\n- Automatically documented from ${turns.length} conversational turns.\n- Status: Completed.`,
+            tags: ['interview', 'auto-generated']
+          };
+          await notesService.save(autoNote);
+          logger.info('Auto-generated note saved for stopped session', { id: autoNote.id });
+        }
+      } catch (err) {
+        logger.warn('Failed to auto-save note on session stop', { error: err.message });
+      }
     });
 
     speechService.on("transcription", (text) => {
@@ -637,26 +760,96 @@ class ApplicationController {
       return { success: true, results };
     });
 
-    ipcMain.handle("send-chat-message", async (event, text) => {
+    ipcMain.handle("set-active-panel", (event, name) => {
+      return windowManager.setActivePanel(name);
+    });
+
+    ipcMain.handle("set-interview-mode", async (_event, enabled) => {
+      if (enabled) {
+        await this.enterInterviewMode();
+      } else {
+        await this.exitInterviewMode();
+      }
+      return this.isInterviewMode;
+    });
+
+    ipcMain.handle("toggle-autopilot", (_event, enabled) => {
+      return this.toggleAutopilot(enabled);
+    });
+
+    ipcMain.handle("get-latency-metrics", () => {
+      return llmService.getLatencyMetrics();
+    });
+
+    ipcMain.handle("detach-panel", (event, name) => {
+      windowManager.detachPanel(name);
+      return { success: true };
+    });
+
+    ipcMain.handle("attach-panel", (event, name) => {
+      windowManager.attachPanel(name);
+      return { success: true };
+    });
+
+    ipcMain.handle("set-blackout", (event, on) => {
+      windowManager.blackout(on);
+      return { success: true, blackout: windowManager.isBlackout };
+    });
+
+    ipcMain.handle("get-transcript", (event, n) => {
+      return sessionManager.getRecentTranscript ? sessionManager.getRecentTranscript(n || 20) : [];
+    });
+
+    // Notes service IPC
+    ipcMain.handle("notes:list", async () => {
+      return await notesService.list();
+    });
+
+    ipcMain.handle("notes:get", async (event, id) => {
+      return await notesService.get(id);
+    });
+
+    ipcMain.handle("notes:save", async (event, note) => {
+      return await notesService.save(note);
+    });
+
+    ipcMain.handle("notes:remove", async (event, id) => {
+      return await notesService.remove(id);
+    });
+
+    ipcMain.handle("notes:export", async (event, { id, format }) => {
+      return await notesService.export(id, format);
+    });
+
+    ipcMain.handle("send-chat-message", async (event, text, useListenContext = false) => {
       // Add chat message to session memory
       sessionManager.addUserInput(text, 'chat');
-      logger.debug('Chat message added to session memory', { textLength: text.length });
+      logger.debug('Chat message added to session memory', { textLength: (text || '').length, useListenContext });
 
       // Typed messages need the full skill pipeline (with history context),
       // NOT the voice "intelligent filter" pipeline. Voice keeps its filter
       // behaviour; typed chat goes through processWithLLM so it gets real
       // answers using the active skill prompt and recent conversation history.
-      setTimeout(async () => {
+      setImmediate(async () => {
         try {
+          let promptText = text;
+          if (useListenContext && sessionManager.getRecentTranscript) {
+            const recentTurns = sessionManager.getRecentTranscript(15);
+            if (recentTurns && recentTurns.length > 0) {
+              const formattedTurns = recentTurns.map(t => `[${(t.speaker || t.role).toUpperCase()}]: ${t.content}`).join('\n');
+              promptText = `[Conversation Context from Listen]:\n${formattedTurns}\n\n[User Question]:\n${text}`;
+            }
+          }
           const sessionHistory = sessionManager.getOptimizedHistory();
-          await this.processWithLLM(text, sessionHistory);
+          await this.processWithLLM(promptText, sessionHistory);
         } catch (error) {
           logger.error("Failed to process chat message with LLM", {
             error: error.message,
-            text: text.substring(0, 100)
+            text: (text || '').substring(0, 100)
           });
+          this.broadcastLLMError(error.message);
         }
-      }, 500);
+      });
 
       return { success: true };
     });
@@ -1437,17 +1630,28 @@ class ApplicationController {
    * asked once the speaker has actually paused — this is what stops one spoken
    * line from producing two separate, slow answers.
    */
-  handleTranscriptionFragment(text) {
+  handleTranscriptionFragment(text, explicitSpeaker = null) {
     const fragment = (text || "").trim();
     if (!fragment) {
       return;
     }
 
+    const speaker = explicitSpeaker || (intentGate.detectSpeaker ? intentGate.detectSpeaker(fragment) : 'them');
+
     // Show the live transcript right away in all windows.
-    sessionManager.addUserInput(fragment, 'speech');
+    sessionManager.addUserInput(fragment, 'speech', { speaker });
     BrowserWindow.getAllWindows().forEach((window) => {
-      window.webContents.send("transcription-received", { text: fragment });
+      window.webContents.send("transcription-received", { text: fragment, speaker });
     });
+
+    if (this.isAutopilotEnabled) {
+      this.turnAggregator.push({
+        text: fragment,
+        speaker: speaker || 'them',
+        at: Date.now()
+      });
+      return;
+    }
 
     this._utteranceBuffer = this._utteranceBuffer
       ? `${this._utteranceBuffer} ${fragment}`
@@ -1460,6 +1664,440 @@ class ApplicationController {
       this._utteranceTimer = null;
       this.dispatchCoalescedUtterance();
     }, this._utteranceCoalesceMs);
+  }
+
+  async handleAggregatedTurn(turn) {
+    if (!turn || !turn.text) return;
+    const intent = intentGate.classify(turn, this.autopilotAggressiveness);
+    logger.info('[AUTOPILOT-INTENT]', { text: turn.text, intent });
+
+    if (intent.act === 'ignore') {
+      logger.debug('[AUTOPILOT] Ignored turn', { why: intent.why, text: turn.text });
+      return;
+    }
+
+    if (intent.act === 'brief') {
+      sessionManager.addConversationEvent({
+        role: 'system',
+        content: `Context: ${turn.text}`,
+        action: 'context_brief'
+      });
+      logger.info('[AUTOPILOT] Saved silent context brief', { words: turn.text.split(' ').length });
+      return;
+    }
+
+    this.lastSpokenQuestion = turn.text;
+    await this.processAutopilotAnswer(turn, intent);
+  }
+
+  async handleSpeculativeStart(firstFragment) {
+    if (!this.isAutopilotEnabled) return;
+    const intent = intentGate.classify(firstFragment, this.autopilotAggressiveness);
+    if (intent.act !== 'answer') return;
+
+    this._speculativeAbortController = new AbortController();
+    const prompterWin = windowManager.windows.get('prompter');
+    if (prompterWin && !prompterWin.isDestroyed()) {
+      prompterWin.webContents.send('prompter:stream-start', {
+        headline: 'Thinking...',
+        isSpeculative: true
+      });
+    }
+
+    try {
+      await llmService.processAutopilotTurnStream(
+        { text: firstFragment, at: Date.now() },
+        this.activeSkill,
+        this.codingLanguage,
+        { kind: intent.kind, isSpeculative: true },
+        (delta) => {
+          if (prompterWin && !prompterWin.isDestroyed()) {
+            prompterWin.webContents.send('prompter:stream-delta', { delta });
+          }
+        },
+        this._speculativeAbortController.signal
+      );
+    } catch (err) {
+      if (err.message === 'Request aborted') {
+        logger.info('[AUTOPILOT] Speculative request aborted due to incoming addition');
+      }
+    }
+  }
+
+  handleSpeculativeCancel() {
+    if (this._speculativeAbortController) {
+      try {
+        this._speculativeAbortController.abort();
+      } catch (_) {}
+      this._speculativeAbortController = null;
+      logger.info('[AUTOPILOT] Cancelled in-flight speculative request');
+    }
+  }
+
+  async processAutopilotAnswer(turn, intent) {
+    this.handleSpeculativeCancel();
+
+    const prompterWin = windowManager.windows.get('prompter');
+    if (prompterWin && !prompterWin.isDestroyed()) {
+      prompterWin.webContents.send('prompter:stream-start', {
+        headline: 'Generating answer...',
+        isSpeculative: false
+      });
+    }
+
+    this._responseSeq = (this._responseSeq || 0) + 1;
+    const messageId = `tr-${Date.now()}-${this._responseSeq}`;
+    windowManager.broadcastToAllWindows("transcription-llm-response-start", {
+      messageId,
+      skill: this.activeSkill,
+      speaker: 'them',
+      question: turn.text
+    });
+    windowManager.showLLMLoading();
+
+    let capturedImageBuffer = null;
+    let mimeType = 'image/png';
+
+    // Auto-capture frame if task or screen-referencing turn
+    if (intent.needsScreen) {
+      try {
+        const captureResult = await captureService.captureAndProcess({ autoROI: true });
+        if (captureResult && !captureResult.isDuplicate && captureResult.imageBuffer) {
+          capturedImageBuffer = captureResult.imageBuffer;
+          mimeType = captureResult.mimeType || 'image/png';
+        }
+      } catch (err) {
+        logger.warn('[AUTOPILOT] Auto screen capture error', { error: err.message });
+      }
+    }
+
+    const resolved = skillRouterService.resolveSkill({
+      text: turn.text,
+      lockedSkill: this.lockedSkill,
+      preset: this.interviewPreset,
+      activeSkill: this.activeSkill
+    });
+    const targetSkill = resolved.skill;
+
+    try {
+      let result;
+      if (capturedImageBuffer) {
+        result = await this.processVisionTurn(capturedImageBuffer, mimeType, turn.text, targetSkill, messageId);
+      } else {
+        result = await llmService.processAutopilotTurnStream(
+          turn,
+          targetSkill,
+          this.codingLanguage,
+          { kind: intent.kind },
+          (delta) => {
+            if (prompterWin && !prompterWin.isDestroyed()) {
+              prompterWin.webContents.send('prompter:stream-delta', { delta });
+            }
+            windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
+              messageId,
+              delta
+            });
+          }
+        );
+      }
+
+      // Format response text for multi-window broadcast
+      const responseText = result.fullText || (
+        (result.headline ? `HEADLINE: ${result.headline}\n\n` : '') +
+        (result.bullets && result.bullets.length ? result.bullets.map(b => `- ${b}`).join('\n') : '') +
+        (result.code ? `\n\n\`\`\`${result.language || ''}\n${result.code}\n\`\`\`` : '')
+      );
+
+      // Send to prompter window
+      if (prompterWin && !prompterWin.isDestroyed()) {
+        if (result.fullText && result.fullText.includes('NO_PROBLEM_FOUND')) {
+          prompterWin.webContents.send('prompter:no-problem');
+        } else {
+          prompterWin.webContents.send('prompter:update', result);
+        }
+      }
+
+      // Broadcast to Listen panel, Chat panel, and Overlay window
+      const broadcastPayload = {
+        response: responseText,
+        text: responseText,
+        metadata: {
+          messageId,
+          headline: result.headline,
+          bullets: result.bullets,
+          code: result.code,
+          language: result.language,
+          skill: targetSkill,
+          skillConfidence: resolved.confidence,
+          question: turn.text,
+          isAutopilot: true
+        }
+      };
+      this.broadcastTranscriptionLLMResponse(broadcastPayload);
+      windowManager.showLLMResponse(responseText, broadcastPayload.metadata);
+
+      // Also record into session manager
+      sessionManager.addModelResponse(responseText, {
+        skill: targetSkill,
+        skillConfidence: resolved.confidence,
+        autopilot: true
+      });
+    } catch (err) {
+      logger.error('[AUTOPILOT] Failed to answer turn', { error: err.message });
+    }
+  }
+
+  async processVisionTurn(imageBuffer, mimeType, questionText, skill, messageId = null) {
+    const prompterWin = windowManager.windows.get('prompter');
+    const visionPromptPath = path.join(__dirname, 'prompts', 'vision.md');
+    let visionInstruction = fs.existsSync(visionPromptPath)
+      ? fs.readFileSync(visionPromptPath, 'utf8')
+      : '';
+
+    if (questionText) {
+      visionInstruction += `\nInterviewer spoken context: "${questionText}"`;
+    }
+
+    const res = await llmService.processImageWithSkillStream(
+      imageBuffer,
+      mimeType,
+      skill,
+      [],
+      this.codingLanguage,
+      { customInstruction: visionInstruction },
+      (delta) => {
+        if (prompterWin && !prompterWin.isDestroyed()) {
+          prompterWin.webContents.send('prompter:stream-delta', { delta });
+        }
+        if (messageId) {
+          windowManager.broadcastToAllWindows("transcription-llm-response-chunk", {
+            messageId,
+            delta
+          });
+        }
+      }
+    );
+
+    const fullResponse = res.response || '';
+    const codeMatch = fullResponse.match(/```(?:[a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+    let code = null;
+    if (codeMatch) {
+      code = codeMatch[1].trim();
+      const { clipboard } = require('electron');
+      if (clipboard) {
+        clipboard.writeText(code);
+      }
+    }
+
+    const prose = fullResponse.replace(/```(?:[a-zA-Z0-9_-]+)?\s*[\s\S]*?```/g, '').trim();
+    const lines = prose.split('\n').map(l => l.trim()).filter(Boolean);
+    let headline = '';
+    const bullets = [];
+    for (const l of lines) {
+      if (/^HEADLINE:\s*/i.test(l)) {
+        headline = l.replace(/^HEADLINE:\s*/i, '').trim();
+      } else if (/^[-*•]\s+/.test(l)) {
+        bullets.push(l.replace(/^[-*•]\s+/, '').trim());
+      }
+    }
+    if (!headline && lines.length > 0) {
+      headline = lines[0].replace(/^HEADLINE:\s*/i, '');
+    }
+    if (bullets.length === 0 && lines.length > 1) {
+      bullets.push(...lines.slice(1, 4));
+    }
+
+    return {
+      headline: headline || 'Problem solution',
+      bullets: bullets.slice(0, 3),
+      code,
+      fullText: fullResponse
+    };
+  }
+
+  async dispatchLastAnswerAction(style) {
+    if (!this.lastSpokenQuestion) {
+      logger.info('No previous question to re-answer');
+      return;
+    }
+    const prompterWin = windowManager.windows.get('prompter');
+    if (prompterWin && !prompterWin.isDestroyed()) {
+      prompterWin.webContents.send('prompter:stream-start', {
+        headline: style === 'deep' ? 'Re-answering deeper...' : 'Re-answering shorter...',
+        isSpeculative: false
+      });
+    }
+    try {
+      const result = await llmService.processAutopilotTurnStream(
+        { text: this.lastSpokenQuestion, at: Date.now() },
+        this.activeSkill,
+        this.codingLanguage,
+        {
+          kind: 'question',
+          style: style === 'deep' ? 'deep' : 'concise'
+        },
+        (delta) => {
+          if (prompterWin && !prompterWin.isDestroyed()) {
+            prompterWin.webContents.send('prompter:stream-delta', { delta });
+          }
+        }
+      );
+      if (prompterWin && !prompterWin.isDestroyed()) {
+        prompterWin.webContents.send('prompter:update', result);
+      }
+    } catch (e) {
+      logger.warn('Failed to re-answer question', { error: e.message });
+    }
+  }
+
+  async triggerAutopilotScreenCapture() {
+    logger.info('[AUTOPILOT] Alt+S manual capture triggered');
+    const prompterWin = windowManager.windows.get('prompter');
+    if (prompterWin && !prompterWin.isDestroyed()) {
+      prompterWin.webContents.send('prompter:stream-start', {
+        headline: 'Analyzing screen...',
+        isSpeculative: false
+      });
+    }
+
+    try {
+      const captureResult = await captureService.captureAndProcess({ autoROI: true });
+      if (!captureResult || !captureResult.imageBuffer) return;
+
+      const result = await this.processVisionTurn(
+        captureResult.imageBuffer,
+        captureResult.mimeType || 'image/png',
+        this.lastSpokenQuestion || '',
+        this.activeSkill
+      );
+
+      if (prompterWin && !prompterWin.isDestroyed()) {
+        if (result.fullText && result.fullText.includes('NO_PROBLEM_FOUND')) {
+          prompterWin.webContents.send('prompter:no-problem');
+        } else {
+          prompterWin.webContents.send('prompter:update', result);
+        }
+      }
+
+      // Also display and broadcast to Vision panel (llmResponse) and chat
+      if (result.fullText && !result.fullText.includes('NO_PROBLEM_FOUND')) {
+        const visionPayload = {
+          response: result.fullText,
+          metadata: {
+            skill: this.activeSkill,
+            skillConfidence: 0.95,
+            isImageAnalysis: true,
+            code: result.code,
+            headline: result.headline
+          }
+        };
+        windowManager.showLLMResponse(result.fullText, visionPayload.metadata);
+        this.broadcastLLMSuccess(visionPayload);
+      }
+    } catch (err) {
+      logger.error('[AUTOPILOT] Screen capture analysis failed', { error: err.message });
+      this.broadcastLLMError(`Screen capture failed: ${err.message}`);
+    }
+  }
+
+  toggleAutopilot(enabled) {
+    this.isAutopilotEnabled = typeof enabled === 'boolean' ? enabled : !this.isAutopilotEnabled;
+    windowManager.broadcastToAllWindows('autopilot-changed', { enabled: this.isAutopilotEnabled });
+    logger.info(`[AUTOPILOT] Autopilot mode set to: ${this.isAutopilotEnabled}`);
+    return this.isAutopilotEnabled;
+  }
+
+  async enterInterviewMode() {
+    this.isInterviewMode = true;
+    this.isAutopilotEnabled = true;
+
+    // 1. Close all panels
+    await windowManager.closeAllPanels();
+
+    // 2. Open prompter
+    await windowManager.showPrompter();
+
+    // 3. Set prompter click-through
+    windowManager.setPrompterInteractive(false);
+
+    // 4. Set opacity default
+    windowManager.setGlobalOpacity(1.0);
+
+    // 5. Start speech service if available
+    if (this.speechAvailable && !speechService.isRecording) {
+      try {
+        await speechService.startRecording();
+      } catch (err) {
+        logger.warn('Could not auto-start speech recording', { error: err.message });
+      }
+    }
+
+    // 6. Pre-warm services
+    this.prewarmServices();
+
+    // 7. Notify all windows
+    windowManager.broadcastToAllWindows('interview-mode-changed', { active: true, autopilot: true });
+    logger.info('[INTERVIEW-MODE] Entered Interview Mode');
+    return true;
+  }
+
+  async exitInterviewMode() {
+    this.isInterviewMode = false;
+    this.isAutopilotEnabled = false;
+
+    // 1. Stop speech
+    if (speechService.isRecording) {
+      try {
+        await speechService.stopRecording();
+      } catch (err) {
+        logger.warn('Error stopping speech recording', { error: err.message });
+      }
+    }
+
+    // 2. Hide prompter
+    windowManager.hidePrompter();
+
+    // 3. Restore panels interactivity
+    windowManager.setInteractive(true);
+
+    // 4. Open notes panel for post-interview review
+    windowManager.setActivePanel('notes');
+
+    // 5. Notify all windows
+    windowManager.broadcastToAllWindows('interview-mode-changed', { active: false, autopilot: false });
+    logger.info('[INTERVIEW-MODE] Exited Interview Mode');
+    return false;
+  }
+
+  async toggleInterviewMode() {
+    if (this.isInterviewMode) {
+      return await this.exitInterviewMode();
+    } else {
+      return await this.enterInterviewMode();
+    }
+  }
+
+  async prewarmServices() {
+    try {
+      if (llmService.client) {
+        llmService.client.models.generateContent({
+          model: llmService.model,
+          contents: [{ role: 'user', parts: [{ text: 'ping' }] }],
+          generationConfig: { maxOutputTokens: 1 }
+        }).catch(() => {});
+      }
+      captureService.captureAndProcess({ autoROI: false }).catch(() => {});
+      logger.info('Services pre-warmed successfully');
+    } catch (err) {
+      logger.warn('Pre-warm non-critical failure', { error: err.message });
+    }
+  }
+
+  handlePushToAsk() {
+    logger.info('[AUTOPILOT] Alt+W Push-to-Ask triggered');
+    if (this.speechAvailable && !speechService.isRecording) {
+      speechService.startRecording();
+    }
   }
 
   /**

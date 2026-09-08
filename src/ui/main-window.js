@@ -260,17 +260,16 @@ class MainWindowUI {
     resizeWindowToContent() {
         // Wait for DOM to fully render
         setTimeout(() => {
-            const commandTab = document.querySelector('.command-tab');
-            if (commandTab && window.electronAPI && window.electronAPI.resizeWindow) {
-                const rect = commandTab.getBoundingClientRect();
-                const width = Math.ceil(rect.width);
-                let height = Math.ceil(rect.height);
+            const hubElement = document.getElementById('hub') || document.querySelector('.hub') || document.querySelector('.command-tab');
+            if (hubElement && window.electronAPI && window.electronAPI.resizeWindow) {
+                const rect = hubElement.getBoundingClientRect();
+                const width = Math.max(680, Math.ceil(rect.width + 16));
+                let height = Math.max(44, Math.ceil(rect.height + 4));
 
                 // If shortcuts popover is visible, extend height to fit it
-                if (this.shortcutsPopover && this.shortcutsPopover.classList.contains('is-open')) {
+                if (this.shortcutsPopover && (this.shortcutsPopover.classList.contains('is-open') || this.shortcutsPopover.classList.contains('show'))) {
                     const popRect = this.shortcutsPopover.getBoundingClientRect();
-                    // popover is positioned below the bar (top:36px), add that plus its height and a small margin
-                    height = Math.max(height, Math.ceil(36 + popRect.height + 8));
+                    height = Math.max(height, Math.ceil(36 + popRect.height + 12));
                 }
                 
                 logger.debug('Resizing window to content', {
@@ -285,83 +284,135 @@ class MainWindowUI {
     }
 
     setupElements() {
+        this.hub = document.getElementById('hub');
+        this.openPanel = null;
         this.statusDot = document.getElementById('statusDot');
+        this.hubMore = document.getElementById('hubMore') || document.getElementById('infoButton');
+        this.shortcutsPopover = document.getElementById('shortcutsPopover');
+        this.quotaChip = document.getElementById('quotaChip');
+        this.interviewChip = document.getElementById('interviewChip');
+        this.interviewTimer = document.getElementById('interviewTimer');
+        this.isInterviewActive = false;
+        this._interviewTimerInterval = null;
+        this._interviewStartTime = null;
+        this.listenLiveDot = document.getElementById('listenLiveDot');
         this.skillIndicator = document.getElementById('skillIndicator');
-        this.settingsIndicator = document.getElementById('settingsIndicator'); // Optional
+        this.settingsIndicator = document.getElementById('settingsIndicator');
         this.micButton = document.getElementById('micButton');
-    this.infoButton = document.getElementById('infoButton');
-    this.shortcutsPopover = document.getElementById('shortcutsPopover');
+        this.isBlackout = false;
 
-        // NEW: Screenshot button is the first .command-item without id
-        const commandItems = document.querySelectorAll('.command-item');
-        this.screenshotButton = commandItems && commandItems[0];
-
-    if (!this.statusDot || !this.skillIndicator || !this.micButton || !this.screenshotButton) {
-            throw new Error('Required UI elements not found');
+        // Wire Interview Mode master toggle button
+        if (this.interviewChip) {
+            const toggleInterview = async (e) => {
+                if (e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                }
+                if (window.electronAPI && window.electronAPI.setInterviewMode) {
+                    try {
+                        const nextState = !this.isInterviewActive;
+                        logger.info('Interview button clicked -> nextState:', nextState);
+                        await window.electronAPI.setInterviewMode(nextState);
+                    } catch (err) {
+                        logger.error('Failed to toggle interview mode', err);
+                    }
+                }
+            };
+            this.interviewChip.addEventListener('click', toggleInterview);
+            this.interviewChip.addEventListener('mousedown', (e) => e.stopPropagation());
         }
 
-        // Screenshot click handler
-        this.screenshotButton.addEventListener('click', () => {
-            if (this.isInteractive && window.electronAPI && window.electronAPI.takeScreenshot) {
-                window.electronAPI.takeScreenshot();
-            }
-        });
+        // Wire Smog Hub Tabs
+        if (this.hub) {
+            this.hub.querySelectorAll('.hub-tab').forEach(tab => {
+                tab.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    const panel = tab.dataset.panel;
+                    this.selectPanel(panel);
+                });
+            });
+        }
 
-        // Skill indicator click cycles through available skills
-        this.skillIndicator.addEventListener('click', () => {
-            if (!this.isInteractive) return;
-            this.navigateSkill(1);
-        });
-
-        // Right-click toggles lock
-        this.skillIndicator.addEventListener('contextmenu', async (e) => {
-            e.preventDefault();
-            if (!this.isInteractive) return;
-            if (window.electronAPI && window.electronAPI.setSkillLock) {
-                const target = this.isSkillLocked ? null : (this.currentSkill === 'auto' ? 'dsa' : this.currentSkill);
-                try {
-                    const res = await window.electronAPI.setSkillLock(target);
-                    this.isSkillLocked = !!res?.locked;
-                    this.updateSkillIndicator();
-                } catch (err) {
-                    logger.error('Failed to toggle skill lock', err);
-                }
-            }
-        });
-
-        // Check for required elements (settingsIndicator is optional)
-        if (this.settingsIndicator) {
-            this.settingsIndicator.addEventListener('click', () => {
-                if (this.isInteractive) {
-                    this.showSettingsMenu();
+        // Hub more / Shortcuts popover
+        if (this.hubMore && this.shortcutsPopover) {
+            this.hubMore.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.shortcutsPopover.classList.toggle('show');
+            });
+            document.addEventListener('click', (e) => {
+                if (this.shortcutsPopover && !this.shortcutsPopover.contains(e.target) && e.target !== this.hubMore) {
+                    this.shortcutsPopover.classList.remove('show');
                 }
             });
         }
 
-        // Add click handler for microphone
-        this.micButton.addEventListener('click', async () => {
-            if (this.isInteractive && this.speechAvailable) {
-                try {
-                    if (this.isRecording) {
-                        await window.electronAPI.stopSpeechRecognition();
-                    } else {
-                        await window.electronAPI.startSpeechRecognition();
-                    }
-                } catch (error) {
-                    logger.error('Speech recognition toggle failed', {
-                        component: 'MainWindowUI',
-                        error: error.message
-                    });
-                    this.isRecording = false;
-                    this.updateMicButtonState();
+        // Legacy screenshot button support if present
+        const commandItems = document.querySelectorAll('.command-item');
+        this.screenshotButton = commandItems && commandItems[0];
+        if (this.screenshotButton) {
+            this.screenshotButton.addEventListener('click', () => {
+                if (this.isInteractive && window.electronAPI && window.electronAPI.takeScreenshot) {
+                    window.electronAPI.takeScreenshot();
                 }
-            } else if (this.isInteractive && !this.speechAvailable) {
-                logger.warn('Mic clicked but speech recognition is not available', {
-                    component: 'MainWindowUI'
-                });
-                this.loadSpeechAvailability();
-            }
-        });
+            });
+        }
+
+        // Skill indicator click cycles through available skills
+        if (this.skillIndicator) {
+            this.skillIndicator.addEventListener('click', () => {
+                if (!this.isInteractive) return;
+                this.navigateSkill(1);
+            });
+
+            this.skillIndicator.addEventListener('contextmenu', async (e) => {
+                e.preventDefault();
+                if (!this.isInteractive) return;
+                if (window.electronAPI && window.electronAPI.setSkillLock) {
+                    const target = this.isSkillLocked ? null : (this.currentSkill === 'auto' ? 'dsa' : this.currentSkill);
+                    try {
+                        const res = await window.electronAPI.setSkillLock(target);
+                        this.isSkillLocked = !!res?.locked;
+                        this.updateSkillIndicator();
+                    } catch (err) {
+                        logger.error('Failed to toggle skill lock', err);
+                    }
+                }
+            });
+        }
+
+        if (this.settingsIndicator) {
+            this.settingsIndicator.addEventListener('click', () => {
+                if (this.isInteractive) {
+                    this.selectPanel('params');
+                }
+            });
+        }
+
+        if (this.micButton) {
+            this.micButton.addEventListener('click', async () => {
+                if (this.isInteractive && this.speechAvailable) {
+                    try {
+                        if (this.isRecording) {
+                            await window.electronAPI.stopSpeechRecognition();
+                        } else {
+                            await window.electronAPI.startSpeechRecognition();
+                        }
+                    } catch (error) {
+                        logger.error('Speech recognition toggle failed', {
+                            component: 'MainWindowUI',
+                            error: error.message
+                        });
+                        this.isRecording = false;
+                        this.updateMicButtonState();
+                    }
+                } else if (this.isInteractive && !this.speechAvailable) {
+                    logger.warn('Mic clicked but speech recognition is not available', {
+                        component: 'MainWindowUI'
+                    });
+                    this.loadSpeechAvailability();
+                }
+            });
+        }
 
         // Language dropdown
         this.languageSelect = document.getElementById('codingLanguage');
@@ -445,8 +496,49 @@ class MainWindowUI {
         }
     }
 
+    async selectPanel(name) {
+        const next = this.openPanel === name ? null : name; // click active tab = close (toggle)
+        if (this.hub) {
+            this.hub.querySelectorAll('.hub-tab').forEach(t =>
+                t.setAttribute('aria-selected', String(t.dataset.panel === next)));
+        }
+        this.openPanel = next;
+        if (window.electronAPI && window.electronAPI.setActivePanel) {
+            await window.electronAPI.setActivePanel(next);
+        }
+    }
+
     setupEventListeners() {
         if (window.electronAPI) {
+            // Smog blackout mode listener
+            if (window.electronAPI.onBlackout) {
+                window.electronAPI.onBlackout((on) => {
+                    this.isBlackout = !!on;
+                    document.documentElement.classList.toggle('blackout', this.isBlackout);
+                });
+            }
+
+            // Quota updates
+            if (window.electronAPI.onQuota) {
+                window.electronAPI.onQuota((data) => {
+                    if (!data) return;
+                    const totalEl = document.getElementById('quotaTotal');
+                    const pctEl = document.getElementById('quotaPct');
+                    const restEl = document.getElementById('quotaRest');
+                    if (totalEl && data.total) totalEl.textContent = data.total;
+                    if (pctEl && data.pct) pctEl.textContent = data.pct;
+                    if (restEl && data.rest) restEl.textContent = data.rest;
+                });
+            }
+
+            // Interview mode listener
+            if (window.electronAPI.onInterviewModeChanged) {
+                window.electronAPI.onInterviewModeChanged((data) => {
+                    const active = typeof data === 'boolean' ? data : !!data?.active;
+                    this.handleInterviewModeChanged(active);
+                });
+            }
+
             // Fix interaction mode change listener
             window.electronAPI.onInteractionModeChanged((event, interactive) => {
                 logger.debug('Interaction mode changed received:', interactive);
@@ -576,6 +668,36 @@ class MainWindowUI {
 
     setupKeyboardShortcuts() {
         document.addEventListener('keydown', (e) => {
+            const isCmdOrCtrl = e.metaKey || e.ctrlKey;
+
+            // Smog panel shortcuts
+            if (isCmdOrCtrl && e.shiftKey && (e.key === 'C' || e.key === 'c')) {
+                e.preventDefault();
+                this.selectPanel('ask');
+                return;
+            }
+            if (isCmdOrCtrl && e.shiftKey && (e.key === 'S' || e.key === 's')) {
+                e.preventDefault();
+                if (window.electronAPI && window.electronAPI.takeScreenshot) {
+                    window.electronAPI.takeScreenshot();
+                }
+                this.selectPanel('vision');
+                return;
+            }
+            if (isCmdOrCtrl && e.key === ',') {
+                e.preventDefault();
+                this.selectPanel('params');
+                return;
+            }
+            if (isCmdOrCtrl && e.shiftKey && (e.key === 'B' || e.key === 'b')) {
+                e.preventDefault();
+                this.isBlackout = !this.isBlackout;
+                if (window.electronAPI && window.electronAPI.setBlackout) {
+                    window.electronAPI.setBlackout(this.isBlackout);
+                }
+                return;
+            }
+
             if (e.metaKey && e.key === '\\') {
                 this.isHidden = !this.isHidden;
                 if (this.isHidden) {
@@ -593,17 +715,12 @@ class MainWindowUI {
                         this.navigateSkill(-1); // Previous skill
                     } else if (e.key === 'ArrowDown') {
                         this.navigateSkill(1); // Next skill
-                    } else {
                     }
-                    // Left/Right arrows do nothing in interactive mode
                 } else {
                     // Non-interactive mode: Cmd + Arrow keys for window movement
                     this.moveWindow(e.key);
                 }
             }
-            
-            // Alt+A is handled globally by the main process
-            // No need to handle it here since it needs to work even when windows are non-interactive
         });
     }
 
@@ -634,6 +751,46 @@ class MainWindowUI {
             statusDotClass: this.statusDot ? this.statusDot.className : 'not found',
             skillIndicatorClass: this.skillIndicator ? this.skillIndicator.className : 'not found'
         });
+    }
+
+    handleInterviewModeChanged(active) {
+        this.isInterviewActive = !!active;
+        logger.info('Handling interview mode change', {
+            component: 'MainWindowUI',
+            active: this.isInterviewActive
+        });
+
+        if (this.interviewChip) {
+            this.interviewChip.classList.toggle('active', this.isInterviewActive);
+            const label = this.interviewChip.querySelector('.label');
+            if (label) {
+                label.textContent = this.isInterviewActive ? 'Live' : 'Interview';
+            }
+        }
+
+        if (this.isInterviewActive) {
+            if (!this._interviewTimerInterval) {
+                this._interviewStartTime = Date.now();
+                this._interviewTimerInterval = setInterval(() => {
+                    if (!this.interviewTimer || !this._interviewStartTime) return;
+                    const elapsedSec = Math.floor((Date.now() - this._interviewStartTime) / 1000);
+                    const h = String(Math.floor(elapsedSec / 3600)).padStart(2, '0');
+                    const m = String(Math.floor((elapsedSec % 3600) / 60)).padStart(2, '0');
+                    const s = String(elapsedSec % 60).padStart(2, '0');
+                    this.interviewTimer.textContent = `${h}:${m}:${s}`;
+                }, 1000);
+            }
+        } else {
+            if (this._interviewTimerInterval) {
+                clearInterval(this._interviewTimerInterval);
+                this._interviewTimerInterval = null;
+            }
+            this._interviewStartTime = null;
+            if (this.interviewTimer) {
+                this.interviewTimer.textContent = '00:00:00';
+            }
+        }
+        this.resizeWindowToContent();
     }
 
     handleSkillChanged(data) {
@@ -671,6 +828,9 @@ class MainWindowUI {
 
     handleRecordingStarted() {
         this.isRecording = true;
+        if (this.listenLiveDot) {
+            this.listenLiveDot.hidden = false;
+        }
         if (this.micButton) {
             this.micButton.classList.add('recording');
         }
@@ -692,6 +852,9 @@ class MainWindowUI {
 
     handleRecordingStopped() {
         this.isRecording = false;
+        if (this.listenLiveDot) {
+            this.listenLiveDot.hidden = true;
+        }
         if (this.micButton) {
             this.micButton.classList.remove('recording');
         }

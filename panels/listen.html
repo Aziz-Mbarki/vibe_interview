@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Listen</title>
+  <link rel="stylesheet" href="../src/styles/tokens.css">
+  <link rel="stylesheet" href="../src/styles/panel.css">
+  <link rel="stylesheet" href="../node_modules/@fortawesome/fontawesome-free/css/all.min.css">
+  <style>
+    .listen-ctrl {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .listen-timer {
+      font: 700 16px/1 var(--font-mono);
+      color: var(--text-0);
+      letter-spacing: 0.04em;
+    }
+    .waveform-canvas {
+      width: 100%;
+      height: 36px;
+      margin-top: 10px;
+      border-radius: 6px;
+      background: rgba(0, 0, 0, 0.25);
+    }
+    .question-card {
+      background: color-mix(in srgb, var(--info) 10%, var(--surface-2));
+      border-color: color-mix(in srgb, var(--info) 30%, transparent);
+      display: none;
+    }
+    .question-card.active {
+      display: block;
+    }
+    .question-text {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-0);
+      line-height: 1.45;
+    }
+    .structured-answer {
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .structured-answer.active {
+      display: flex;
+    }
+    .answer-part {
+      background: var(--surface-2);
+      border: 1px solid var(--border-1);
+      border-radius: var(--r-card);
+      padding: 10px 12px;
+    }
+    .answer-part-title {
+      font: 700 10px/1 var(--font);
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin-bottom: 6px;
+    }
+    .answer-bullets {
+      margin: 0;
+      padding-left: 16px;
+      color: var(--text-1);
+      line-height: 1.5;
+    }
+    .answer-bullets li {
+      margin-bottom: 4px;
+    }
+    .transcript-empty {
+      text-align: center;
+      padding: 36px 16px;
+      color: var(--text-3);
+      font-size: 12px;
+    }
+    .transcript-stream {
+      display: flex;
+      flex-direction: column;
+    }
+  </style>
+</head>
+<body>
+  <section class="panel">
+    <header class="panel-head">
+      <div class="panel-title"><i class="fas fa-microphone-lines"></i> Listen</div>
+      <div class="spacer"></div>
+      <span class="chip" id="quotaChip"><b>5h</b><i>|</i><span>0%</span><i>|</i><span>rest 4h55m</span></span>
+      <button class="hub-icon" data-act="detach" id="btnDetach" title="Detach panel"><i class="fas fa-up-right-from-square"></i></button>
+      <button class="hub-icon" data-act="close" id="btnClose" title="Close panel"><i class="fas fa-xmark"></i></button>
+    </header>
+
+    <div class="panel-body">
+      <!-- 1. Controls Card -->
+      <div class="card">
+        <div class="listen-ctrl">
+          <button id="toggleRecordBtn" class="btn-primary" style="min-width: 110px;">
+            <i class="fas fa-play"></i><span id="recordBtnText">Start</span>
+          </button>
+          <span class="chip is-ok" id="modeChip">Free mode</span>
+          <div class="listen-timer" id="sessionTimer">00:00:00</div>
+        </div>
+        <canvas id="waveformCanvas" class="waveform-canvas" width="380" height="36"></canvas>
+      </div>
+
+      <!-- 2. Detected Question Card (Pinned when classified by router) -->
+      <div class="card question-card" id="questionCard">
+        <div class="label"><i class="fas fa-circle-question" style="color:var(--info);"></i> Detected Question</div>
+        <div class="question-text" id="questionText">Waiting for interviewer question…</div>
+      </div>
+
+      <!-- 3. Structured 3-Part Answer Card (Intro / Bullets / Conclusion) -->
+      <div class="structured-answer" id="structuredAnswerCard">
+        <div class="answer-part">
+          <div class="answer-part-title">Introduction</div>
+          <div id="ansIntro" style="color:var(--text-0); line-height: 1.45;">-</div>
+        </div>
+        <div class="answer-part">
+          <div class="answer-part-title">Content</div>
+          <ul class="answer-bullets" id="ansBullets">
+            <li>-</li>
+          </ul>
+        </div>
+        <div class="answer-part">
+          <div class="answer-part-title">Conclusion</div>
+          <div id="ansConclusion" style="color:var(--text-1); line-height: 1.45;">-</div>
+        </div>
+      </div>
+
+      <!-- 4. Transcript Stream -->
+      <div class="card" style="margin-top: 10px; flex: 1;">
+        <div class="label" style="justify-content: space-between;">
+          <span><i class="fas fa-bars-staggered"></i> Live Utterances</span>
+          <span id="uttCount" style="text-transform:none; font-weight:500; color:var(--text-3);">0 utterances</span>
+        </div>
+        <div class="transcript-stream" id="transcriptStream">
+          <div class="transcript-empty" id="transcriptEmpty">
+            Press Start or press <span class="chip" style="height:20px; padding:0 6px;">Alt+R</span> to transcribe audio
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Activity Bar -->
+    <div class="activity" id="activity">
+      <span class="pulse"></span>
+      <span id="activityText">Idle</span>
+    </div>
+  </section>
+
+  <script>
+    const electron = window.electronAPI;
+    let isRecording = false;
+    let timerInterval = null;
+    let startTime = 0;
+    let isDetached = false;
+    let interimElement = null;
+    let utteranceCount = 0;
+
+    // Detach / Close actions
+    document.getElementById('btnDetach')?.addEventListener('click', async () => {
+      isDetached = !isDetached;
+      const icon = document.querySelector('#btnDetach i');
+      if (isDetached) {
+        if (electron && electron.detachPanel) await electron.detachPanel('listen');
+        if (icon) icon.className = 'fas fa-arrow-down-left-and-up-right-to-center';
+      } else {
+        if (electron && electron.attachPanel) await electron.attachPanel('listen');
+        if (icon) icon.className = 'fas fa-up-right-from-square';
+      }
+    });
+
+    document.getElementById('btnClose')?.addEventListener('click', async () => {
+      if (electron && electron.setActivePanel) {
+        await electron.setActivePanel(null);
+      }
+    });
+
+    // Start / Stop toggle
+    const toggleRecordBtn = document.getElementById('toggleRecordBtn');
+    const recordBtnText = document.getElementById('recordBtnText');
+    const sessionTimer = document.getElementById('sessionTimer');
+
+    toggleRecordBtn?.addEventListener('click', async () => {
+      if (isRecording) {
+        if (electron && electron.stopSpeechRecognition) await electron.stopSpeechRecognition();
+      } else {
+        if (electron && electron.startSpeechRecognition) await electron.startSpeechRecognition();
+      }
+    });
+
+    function setRecordingState(recording) {
+      isRecording = recording;
+      if (isRecording) {
+        toggleRecordBtn.className = 'btn-danger';
+        toggleRecordBtn.querySelector('i').className = 'fas fa-stop';
+        recordBtnText.textContent = 'Stop';
+        startTime = Date.now();
+        if (timerInterval) clearInterval(timerInterval);
+        timerInterval = setInterval(updateTimer, 1000);
+        setActivity('speech', 'Listening…');
+      } else {
+        toggleRecordBtn.className = 'btn-primary';
+        toggleRecordBtn.querySelector('i').className = 'fas fa-play';
+        recordBtnText.textContent = 'Start';
+        if (timerInterval) {
+          clearInterval(timerInterval);
+          timerInterval = null;
+        }
+        setActivity('idle', 'Idle');
+      }
+    }
+
+    function updateTimer() {
+      const diff = Math.floor((Date.now() - startTime) / 1000);
+      const h = String(Math.floor(diff / 3600)).padStart(2, '0');
+      const m = String(Math.floor((diff % 3600) / 60)).padStart(2, '0');
+      const s = String(diff % 60).padStart(2, '0');
+      sessionTimer.textContent = `${h}:${m}:${s}`;
+    }
+
+    function setActivity(stage, detail) {
+      const actText = document.getElementById('activityText');
+      if (actText) actText.textContent = detail || stage || 'Idle';
+    }
+
+    // Audio stream events
+    if (electron) {
+      electron.onRecordingStarted?.(() => setRecordingState(true));
+      electron.onRecordingStopped?.(() => setRecordingState(false));
+
+      // Final transcription
+      electron.onTranscriptionReceived?.((_event, data) => {
+        const text = typeof data === 'string' ? data : (data?.text || '');
+        const speaker = data?.speaker || 'them';
+        appendUtterance(text, speaker, false);
+      });
+
+      // Interim transcription
+      electron.onInterimTranscription?.((_event, data) => {
+        const text = typeof data === 'string' ? data : (data?.text || '');
+        const speaker = data?.speaker || 'them';
+        if (text) {
+          appendUtterance(text, speaker, true);
+        }
+      });
+
+      // LLM Response streaming & result
+      electron.onTranscriptionLlmResponseStart?.((_event, data) => {
+        setActivity('generating', 'Answering…');
+        const q = data?.question || data?.metadata?.question;
+        if (q) showDetectedQuestion(q);
+      });
+
+      electron.onTranscriptionLlmResponseChunk?.((_event, data) => {
+        setActivity('generating', 'Streaming answer…');
+      });
+
+      electron.onTranscriptionLlmResponse?.((_event, data) => {
+        const text = data?.text || data?.response || '';
+        parseAndDisplayStructuredAnswer(text, data?.metadata);
+        const q = data?.question || data?.metadata?.question;
+        if (q) showDetectedQuestion(q);
+        setActivity('idle', 'Answer ready');
+      });
+
+      // Activity bus
+      electron.onActivity?.((data) => {
+        if (data) setActivity(data.stage, data.detail);
+      });
+
+      // Quota updates
+      electron.onQuota?.((data) => {
+        if (!data) return;
+        const chip = document.getElementById('quotaChip');
+        if (chip) chip.innerHTML = `<b>${data.total || '5h'}</b><i>|</i><span>${data.pct || '0%'}</span><i>|</i><span>${data.rest || 'rest 4h55m'}</span>`;
+      });
+
+      // Blackout
+      electron.onBlackout?.((on) => {
+        document.documentElement.classList.toggle('blackout', !!on);
+      });
+    }
+
+    function appendUtterance(text, speaker = 'them', isInterim = false) {
+      if (!text || !text.trim()) return;
+      const stream = document.getElementById('transcriptStream');
+      const empty = document.getElementById('transcriptEmpty');
+      if (empty) empty.style.display = 'none';
+
+      if (isInterim) {
+        if (!interimElement) {
+          interimElement = document.createElement('div');
+          interimElement.className = 'utt is-interim';
+          interimElement.setAttribute('data-spk', speaker);
+          interimElement.innerHTML = `
+            <span class="spk">${speaker === 'them' ? 'Them' : 'You'}</span>
+            <span class="t">${new Date().toLocaleTimeString()}</span>
+            <span class="txt"></span>
+          `;
+          stream.appendChild(interimElement);
+        }
+        interimElement.querySelector('.txt').textContent = text;
+        stream.scrollTop = stream.scrollHeight;
+        return;
+      }
+
+      // Final utterance
+      if (interimElement) {
+        interimElement.remove();
+        interimElement = null;
+      }
+
+      utteranceCount++;
+      const countEl = document.getElementById('uttCount');
+      if (countEl) countEl.textContent = `${utteranceCount} utterances`;
+
+      const row = document.createElement('div');
+      row.className = 'utt';
+      row.setAttribute('data-spk', speaker);
+      row.innerHTML = `
+        <span class="spk">${speaker === 'them' ? 'Them' : 'You'}</span>
+        <span class="t">${new Date().toLocaleTimeString()}</span>
+        <span class="txt">${escapeHtml(text)}</span>
+      `;
+      stream.appendChild(row);
+      stream.scrollTop = stream.scrollHeight;
+    }
+
+    function showDetectedQuestion(qText) {
+      const qCard = document.getElementById('questionCard');
+      const qContent = document.getElementById('questionText');
+      if (qCard && qContent) {
+        qContent.textContent = qText;
+        qCard.classList.add('active');
+      }
+    }
+
+    function parseAndDisplayStructuredAnswer(rawText, metadata = {}) {
+      if (!rawText && !metadata?.headline) return;
+      const card = document.getElementById('structuredAnswerCard');
+      const introEl = document.getElementById('ansIntro');
+      const bulletsEl = document.getElementById('ansBullets');
+      const conclEl = document.getElementById('ansConclusion');
+
+      let intro = metadata?.headline || '';
+      let contentBullets = Array.isArray(metadata?.bullets) ? [...metadata.bullets] : [];
+      let conclusion = '';
+
+      if (!intro && rawText) {
+        // Attempt parsing 3-part format
+        const introMatch = rawText.match(/##\s*Introduction\s*\n([\s\S]*?)(?=##\s*Content|$)/i);
+        const contentMatch = rawText.match(/##\s*Content\s*\n([\s\S]*?)(?=##\s*Conclusion|$)/i);
+        const conclusionMatch = rawText.match(/##\s*Conclusion\s*\n([\s\S]*?)$/i);
+
+        if (introMatch || contentMatch || conclusionMatch) {
+          intro = introMatch ? introMatch[1].trim() : '';
+          if (contentMatch) {
+            const lines = contentMatch[1].split('\n').map(l => l.trim()).filter(l => l.startsWith('-') || l.startsWith('*'));
+            contentBullets = lines.map(l => l.replace(/^[-*]\s*/, '').trim());
+          }
+          conclusion = conclusionMatch ? conclusionMatch[1].trim() : '';
+        } else {
+          // Parse HEADLINE: & bullets (Prompter / Autopilot format) or standard markdown
+          const lines = rawText.split('\n').map(l => l.trim()).filter(Boolean);
+          for (const line of lines) {
+            if (/^HEADLINE:\s*/i.test(line)) {
+              intro = line.replace(/^HEADLINE:\s*/i, '').trim();
+            } else if (/^[-*•]\s+/.test(line)) {
+              contentBullets.push(line.replace(/^[-*•]\s+/, '').trim());
+            } else if (!intro && !line.startsWith('```')) {
+              intro = line;
+            } else if (!conclusion && contentBullets.length > 0 && !line.startsWith('```')) {
+              conclusion = line;
+            }
+          }
+          if (!intro && lines.length > 0) {
+            intro = lines[0];
+            contentBullets = lines.slice(1, 4);
+          }
+        }
+      }
+
+      if (intro || contentBullets.length > 0 || conclusion) {
+        if (introEl) introEl.textContent = intro || 'Overview';
+        if (bulletsEl) {
+          bulletsEl.innerHTML = contentBullets.map(b => `<li>${escapeHtml(b)}</li>`).join('');
+        }
+        if (conclEl) conclEl.textContent = conclusion || '';
+        card.classList.add('active');
+      }
+    }
+
+    function escapeHtml(str) {
+      return str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    // Dummy animated waveform
+    (function drawWaveform() {
+      const canvas = document.getElementById('waveformCanvas');
+      if (!canvas) return;
+      const ctx = canvas.getContext('2d');
+      let step = 0;
+      function render() {
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = isRecording ? 'rgba(34, 197, 94, 0.7)' : 'rgba(255, 255, 255, 0.15)';
+        const bars = 48;
+        const width = (canvas.width - bars * 2) / bars;
+        for (let i = 0; i < bars; i++) {
+          const amp = isRecording ? Math.abs(Math.sin((i + step) * 0.3)) * 24 + 4 : 3;
+          const y = (canvas.height - amp) / 2;
+          ctx.fillRect(i * (width + 2), y, width, amp);
+        }
+        step += isRecording ? 0.2 : 0.05;
+        requestAnimationFrame(render);
+      }
+      render();
+    })();
+  </script>
+</body>
+</html>

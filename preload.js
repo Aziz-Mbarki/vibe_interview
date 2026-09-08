@@ -12,7 +12,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   sendAudioChunk: (buffer) => ipcRenderer.send('audio-chunk', { buffer }),
   getSpeechAvailability: () => ipcRenderer.invoke('get-speech-availability'),
   
-  // Window management
+  // Window & Panel management
+  setActivePanel: (name) => ipcRenderer.invoke('set-active-panel', name),
+  detachPanel: (name) => ipcRenderer.invoke('detach-panel', name),
+  attachPanel: (name) => ipcRenderer.invoke('attach-panel', name),
+  setBlackout: (on) => ipcRenderer.invoke('set-blackout', on),
   showAllWindows: () => ipcRenderer.invoke('show-all-windows'),
   hideAllWindows: () => ipcRenderer.invoke('hide-all-windows'),
   enableWindowInteraction: () => ipcRenderer.invoke('enable-window-interaction'),
@@ -23,13 +27,33 @@ contextBridge.exposeInMainWorld('electronAPI', {
   moveWindow: (deltaX, deltaY) => ipcRenderer.invoke('move-window', { deltaX, deltaY }),
   getWindowStats: () => ipcRenderer.invoke('get-window-stats'),
   
-  // Session memory
+  // Phase 2 Autopilot & Interview Mode
+  setInterviewMode: (enabled) => ipcRenderer.invoke('set-interview-mode', enabled),
+  toggleAutopilot: (enabled) => ipcRenderer.invoke('toggle-autopilot', enabled),
+  getLatencyMetrics: () => ipcRenderer.invoke('get-latency-metrics'),
+  onInterviewModeChanged: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('interview-mode-changed', sub);
+    return () => ipcRenderer.removeListener('interview-mode-changed', sub);
+  },
+  
+  // Session memory & Transcript
   getSessionHistory: () => ipcRenderer.invoke('get-session-history'),
   getLLMSessionHistory: () => ipcRenderer.invoke('get-llm-session-history'),
+  getTranscript: (n) => ipcRenderer.invoke('get-transcript', n),
   clearSessionMemory: () => ipcRenderer.invoke('clear-session-memory'),
   formatSessionHistory: () => ipcRenderer.invoke('format-session-history'),
-  sendChatMessage: (text) => ipcRenderer.invoke('send-chat-message', text),
+  sendChatMessage: (text, useListenContext) => ipcRenderer.invoke('send-chat-message', text, useListenContext),
   getSkillPrompt: (skillName) => ipcRenderer.invoke('get-skill-prompt', skillName),
+  
+  // Notes service
+  notes: {
+    list: () => ipcRenderer.invoke('notes:list'),
+    get: (id) => ipcRenderer.invoke('notes:get', id),
+    save: (note) => ipcRenderer.invoke('notes:save', note),
+    remove: (id) => ipcRenderer.invoke('notes:remove', id),
+    export: (id, format) => ipcRenderer.invoke('notes:export', { id, format })
+  },
   
   // Gemini LLM configuration
   setGeminiApiKey: (apiKey) => ipcRenderer.invoke('set-gemini-api-key', apiKey),
@@ -133,6 +157,36 @@ contextBridge.exposeInMainWorld('electronAPI', {
   onRecordingStopped: (callback) => ipcRenderer.on('recording-stopped', callback),
   onCodingLanguageChanged: (callback) => ipcRenderer.on('coding-language-changed', callback),
   onMainWindowShown: (callback) => ipcRenderer.on('main-window-shown', callback),
+  onBlackout: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('ui:blackout', sub);
+    return () => ipcRenderer.removeListener('ui:blackout', sub);
+  },
+  onActivePanelChanged: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('active-panel-changed', sub);
+    return () => ipcRenderer.removeListener('active-panel-changed', sub);
+  },
+  onPanelDetached: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('panel-detached', sub);
+    return () => ipcRenderer.removeListener('panel-detached', sub);
+  },
+  onQuota: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('quota-update', sub);
+    return () => ipcRenderer.removeListener('quota-update', sub);
+  },
+  onActivity: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('activity:update', sub);
+    return () => ipcRenderer.removeListener('activity:update', sub);
+  },
+  onUtterance: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('speech:utterance', sub);
+    return () => ipcRenderer.removeListener('speech:utterance', sub);
+  },
   
   // Generic receive method
   receive: (channel, callback) => ipcRenderer.on(channel, callback),

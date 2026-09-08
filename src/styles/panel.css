@@ -1,0 +1,389 @@
+/* OpenCluely Smog-grade Shared Panel Shell */
+@import url('./tokens.css');
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  color: var(--text-1);
+  font-family: var(--font);
+  overflow: hidden;
+  user-select: none;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Base Panel Container */
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  width: 100vw;
+  overflow: hidden;
+  background: var(--surface-1);
+  backdrop-filter: var(--blur-panel);
+  -webkit-backdrop-filter: var(--blur-panel);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-panel);
+  box-shadow: var(--shadow-panel);
+  color: var(--text-1);
+  font: 400 13px/1.55 var(--font);
+  transition: opacity var(--t-panel), transform var(--t-panel);
+}
+
+/* Panel Header */
+.panel-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 46px;
+  padding: 0 14px;
+  flex: 0 0 auto;
+  border-bottom: 1px solid var(--border-1);
+  background: var(--surface-2);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+
+.panel-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 600 13px/1 var(--font);
+  color: var(--text-0);
+  letter-spacing: -0.01em;
+}
+
+.panel-title i {
+  color: var(--accent);
+  font-size: 13px;
+}
+
+.panel-head .spacer {
+  flex: 1;
+}
+
+.panel-head button,
+.panel-head .chip,
+.panel-head .seg {
+  -webkit-app-region: no-drag;
+}
+
+/* Panel Body & Footer */
+.panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 14px;
+  -webkit-app-region: no-drag;
+  user-select: text;
+}
+
+.panel-foot {
+  flex: 0 0 auto;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-2);
+  -webkit-app-region: no-drag;
+}
+
+/* Card-in-Card Architecture */
+.card {
+  background: var(--surface-2);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-card);
+  padding: 12px;
+  transition: border-color var(--t), background var(--t);
+}
+
+.card + .card {
+  margin-top: 10px;
+}
+
+.card:hover {
+  border-color: rgba(255, 255, 255, 0.16);
+}
+
+.label {
+  font: 600 11px/1 var(--font);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/* Chips & Pills */
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 24px;
+  padding: 0 9px;
+  border-radius: var(--r-pill);
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
+  font: 600 11px/1 var(--font);
+  color: var(--text-2);
+  white-space: nowrap;
+}
+
+.chip.is-live {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 35%, transparent);
+}
+
+.chip.is-ok {
+  color: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+.chip b {
+  color: var(--text-0);
+  font-weight: 700;
+}
+
+.chip i {
+  opacity: 0.4;
+  font-style: normal;
+}
+
+/* Buttons */
+.hub-icon {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+  transition: var(--t);
+}
+
+.hub-icon:hover {
+  background: var(--surface-3);
+  color: var(--text-0);
+}
+
+.hub-icon:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: #052e16;
+  font: 600 12px/1 var(--font);
+  cursor: pointer;
+  transition: var(--t);
+}
+
+.btn-primary:hover {
+  filter: brightness(1.1);
+  box-shadow: 0 0 12px color-mix(in srgb, var(--accent) 40%, transparent);
+}
+
+.btn-danger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--danger);
+  border-radius: var(--r-pill);
+  background: color-mix(in srgb, var(--danger) 15%, transparent);
+  color: var(--danger);
+  font: 600 12px/1 var(--font);
+  cursor: pointer;
+  transition: var(--t);
+}
+
+.btn-danger:hover {
+  background: var(--danger);
+  color: white;
+}
+
+/* Segmented Control */
+.seg {
+  display: inline-flex;
+  padding: 2px;
+  gap: 2px;
+  background: var(--surface-3);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-pill);
+  -webkit-app-region: no-drag;
+}
+
+.seg-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  font: 600 11px/1 var(--font);
+  cursor: pointer;
+  transition: var(--t);
+  white-space: nowrap;
+}
+
+.seg-btn:hover {
+  color: var(--text-1);
+}
+
+.seg-btn.is-on {
+  background: var(--surface-1);
+  color: var(--text-0);
+  box-shadow: var(--shadow-1);
+}
+
+/* Live Activity Line (Smog's signature status one-liner) */
+.activity {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 11px/1 var(--font);
+  color: var(--text-3);
+  padding: 8px 14px;
+  border-top: 1px solid var(--border-1);
+  background: var(--surface-2);
+  flex: 0 0 auto;
+  user-select: none;
+  -webkit-app-region: no-drag;
+}
+
+.activity .pulse {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: pulseDot 1.2s infinite;
+  flex: 0 0 auto;
+}
+
+@keyframes pulseDot {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.6); opacity: 0.4; }
+}
+
+/* Utterance Stream */
+.utt {
+  display: flex;
+  gap: 8px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--border-0);
+  align-items: baseline;
+}
+
+.utt .spk {
+  flex: 0 0 auto;
+  height: 20px;
+  padding: 0 8px;
+  border-radius: var(--r-pill);
+  font: 700 10px/20px var(--font);
+  letter-spacing: 0.02em;
+}
+
+.utt[data-spk="you"] .spk {
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--accent);
+}
+
+.utt[data-spk="them"] .spk {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  color: var(--info);
+}
+
+.utt .t {
+  flex: 0 0 auto;
+  color: var(--text-3);
+  font: 500 11px/20px var(--font-mono);
+}
+
+.utt .txt {
+  flex: 1;
+  color: var(--text-1);
+  line-height: 1.5;
+  word-break: break-word;
+}
+
+.utt.is-interim .txt {
+  opacity: 0.55;
+  font-style: italic;
+}
+
+/* Code Card */
+.codecard {
+  background: rgba(0, 0, 0, 0.4);
+  border: 1px solid var(--border-1);
+  border-radius: var(--r-card);
+  overflow: hidden;
+  margin: 10px 0;
+}
+
+.codecard-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border-1);
+  font: 600 11px/1 var(--font-mono);
+  color: var(--text-2);
+}
+
+.codecard-copy {
+  border: 0;
+  background: transparent;
+  color: var(--text-2);
+  font: 500 11px/1 var(--font);
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 8px;
+  border-radius: 4px;
+  transition: var(--t);
+}
+
+.codecard-copy:hover {
+  background: var(--surface-3);
+  color: var(--text-0);
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}

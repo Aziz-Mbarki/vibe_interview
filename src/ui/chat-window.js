@@ -269,7 +269,7 @@ class ChatWindowUI {
             // Hide listening animation first
             this.hideListeningAnimation();
             
-            const displayText = speaker === 'interviewer' ? `[Interviewer] ${text}` : (speaker === 'you' ? `[You] ${text}` : text);
+            const displayText = (speaker === 'interviewer' || speaker === 'them') ? `[Interviewer] ${text}` : (speaker === 'you' ? `[You] ${text}` : text);
             // Show transcribed text with a slight delay for smooth transition
             setTimeout(() => {
                 this.addMessage(displayText, 'transcription');

@@ -1,5 +1,6 @@
 const { desktopCapturer, screen } = require('electron');
 const logger = require('../core/logger').createServiceLogger('CAPTURE');
+const roiService = require('./roi.service');
 
 class CaptureService {
   constructor() {
@@ -25,7 +26,7 @@ class CaptureService {
 
   /**
    * Capture screenshot and return an image buffer.
-   * options: { displayId?: number, area?: { x, y, width, height } }
+   * options: { displayId?: number, area?: { x, y, width, height }, autoROI?: boolean }
    */
   async captureAndProcess(options = {}) {
     if (this.isProcessing) throw new Error('Capture already in progress');
@@ -34,25 +35,62 @@ class CaptureService {
     try {
       const { image, metadata } = await this.captureScreenshot(options);
 
-      // Crop if area specified
+      // Crop if area specified or auto-detect ROI
       let finalImage = image;
+      let roiMetadata = null;
       if (options.area && this._isValidArea(options.area)) {
         try {
           finalImage = image.crop(options.area);
         } catch (e) {
           logger.warn('Crop failed, returning full image', { error: e.message, area: options.area });
         }
+      } else if (options.autoROI !== false) {
+        try {
+          const rawBitmap = image.toBitmap();
+          const { width, height } = image.getSize();
+          const roi = roiService.findTextRegion(rawBitmap, width, height, 4);
+          if (roi && roi.isCropped) {
+            finalImage = image.crop(roi);
+            roiMetadata = roi;
+            logger.info('Auto-ROI cropped screen to problem region', {
+              from: `${width}x${height}`,
+              to: `${roi.width}x${roi.height}`
+            });
+          }
+        } catch (e) {
+          logger.warn('Auto-ROI detection failed, using full image', { error: e.message });
+        }
       }
 
-      const buffer = finalImage.toPNG();
+      // Check dHash deduplication
+      let dHash = null;
+      let isDuplicate = false;
+      try {
+        const rawCropBitmap = finalImage.toBitmap();
+        const cropSize = finalImage.getSize();
+        dHash = roiService.computeDHash(rawCropBitmap, cropSize.width, cropSize.height, 4);
+        isDuplicate = roiService.isDuplicateFrame(dHash);
+      } catch (e) {
+        logger.warn('dHash computation failed', { error: e.message });
+      }
+
+      const isJpegAvailable = typeof finalImage.toJPEG === 'function';
+      const buffer = isJpegAvailable ? finalImage.toJPEG(75) : finalImage.toPNG();
+      const mimeType = isJpegAvailable ? 'image/jpeg' : 'image/png';
+
       logger.logPerformance('Screenshot capture', startTime, {
         bytes: buffer.length,
-        dimensions: finalImage.getSize()
+        dimensions: finalImage.getSize(),
+        isCropped: !!roiMetadata,
+        isDuplicate
       });
 
       return {
         imageBuffer: buffer,
-        mimeType: 'image/png',
+        mimeType,
+        dHash,
+        isDuplicate,
+        roi: roiMetadata,
         metadata: {
           timestamp: new Date().toISOString(),
           source: metadata,

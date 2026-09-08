@@ -89,6 +89,21 @@ class Logger {
     });
     return duration;
   }
+
+  emitActivity(stage, detail) {
+    try {
+      const { BrowserWindow } = require('electron');
+      if (BrowserWindow) {
+        BrowserWindow.getAllWindows().forEach((win) => {
+          if (!win.isDestroyed()) {
+            win.webContents.send('activity:update', { stage, detail, timestamp: Date.now() });
+          }
+        });
+      }
+    } catch (_) {
+      // Safe no-op in headless test runners
+    }
+  }
 }
 
 module.exports = new Logger();

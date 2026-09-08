@@ -3,7 +3,10 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>OpenCluely</title>
+    <title>Vision</title>
+    <link rel="stylesheet" href="./node_modules/@fortawesome/fontawesome-free/css/all.min.css" />
+    <link rel="stylesheet" href="./src/styles/tokens.css" />
+    <link rel="stylesheet" href="./src/styles/panel.css" />
     <script src="lib/markdown.js"></script>
     <style>
         .text-white { color: white; }
@@ -13,14 +16,15 @@
         .mr-2 { margin-right: 0.5rem; }
 
         body {
-            background: linear-gradient(135deg, rgba(0, 0, 0, 0.4) 0%, rgba(20, 20, 20, 0.5) 100%);;
+            background: transparent !important;
             -webkit-app-region: no-drag;
-            color: white;
+            color: var(--text-0);
             margin: 0;
             padding: 0;
             overflow: hidden;
             height: 100vh;
             width: 100vw;
+            font-family: var(--font);
         }
         .content-area {
             -webkit-app-region: no-drag;
@@ -528,18 +532,31 @@
     </style>
 </head>
 <body class="text-white">
-    <div class="main-container has-header">
-        <!-- Draggable Header -->
-        <div class="window-header">
-            <div style="display: flex; align-items: center; gap: 8px;">
+    <div class="panel main-container has-header" id="visionPanel">
+        <!-- Smog-grade Panel Head -->
+        <div class="panel-head">
+            <div class="panel-title" style="display: flex; align-items: center; gap: 8px;">
+                <i class="fas fa-eye" style="color: var(--accent);"></i>
+                <span>Vision</span>
                 <div id="skill-badge-btn" class="skill-badge-btn" title="Click to re-run as another skill">
                     <span id="conf-dot" class="conf-dot green"></span>
-                    <span id="badge-text">DSA · direct · concise</span>
+                    <span id="badge-text">DSA · direct</span>
                     <span id="lock-icon" class="hidden">🔒</span>
                 </div>
             </div>
-            <div class="window-controls">
-                <button id="close-window-btn" class="window-btn window-btn-close" title="Close">×</button>
+            <!-- Segmented capture trigger mode -->
+            <div class="seg" id="visionModeSeg" style="-webkit-app-region: no-drag;">
+                <button class="seg-btn is-active" data-mode="auto">Auto</button>
+                <button class="seg-btn" data-mode="question">On Question</button>
+                <button class="seg-btn" data-mode="manual">Manual</button>
+            </div>
+            <div class="panel-actions">
+                <button id="capture-screen-btn" class="chip" style="cursor:pointer; gap:5px; background:var(--surface-3); border:1px solid var(--border-2); color:var(--text-0); font-weight:600; padding:3px 10px; -webkit-app-region: no-drag;" title="Capture screen and solve (Alt+S / Ctrl+Shift+S)">
+                    <i class="fas fa-camera" style="color:var(--accent);"></i>
+                    <span>Capture</span>
+                </button>
+                <button id="detach-btn" class="icon-btn" title="Detach panel"><i class="fas fa-up-right-from-square"></i></button>
+                <button id="close-window-btn" class="icon-btn" title="Close"><i class="fas fa-xmark"></i></button>
             </div>
         </div>
 
@@ -571,6 +588,24 @@
             </div>
         </div>
 
+        <!-- Empty State / Quick Start Guide -->
+        <div id="empty-state" class="vision-empty-state" style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: calc(100vh - 120px); text-align: center; padding: 24px; color: var(--text-1); user-select: none;">
+            <div style="width: 52px; height: 52px; border-radius: 50%; background: var(--surface-2); border: 1px solid var(--border-2); display: flex; align-items: center; justify-content: center; font-size: 22px; color: var(--accent); margin-bottom: 14px; box-shadow: 0 0 20px rgba(16, 185, 129, 0.15);">
+                <i class="fas fa-camera"></i>
+            </div>
+            <h3 style="margin: 0 0 8px; font-size: 15px; font-weight: 700; color: var(--text-0);">Vision Screen Intelligence</h3>
+            <p style="margin: 0 0 16px; max-width: 440px; font-size: 12px; line-height: 1.5; color: var(--text-2);">
+                Capture any coding challenge, architecture diagram, or terminal error on your screen. OpenCluely will auto-crop the problem region, generate optimal code, and explain the solution.
+            </p>
+            <div style="display: flex; gap: 8px; margin-bottom: 18px; flex-wrap: wrap; justify-content: center;">
+                <span class="chip" style="font-size: 11px; padding: 4px 10px; background: var(--surface-2);"><b style="color:var(--text-0); margin-right:4px;">Alt + S</b> Fast Capture</span>
+                <span class="chip" style="font-size: 11px; padding: 4px 10px; background: var(--surface-2);"><b style="color:var(--text-0); margin-right:4px;">Ctrl + Shift + S</b> Full Screen</span>
+            </div>
+            <button id="empty-capture-btn" style="display: inline-flex; align-items: center; gap: 8px; padding: 8px 18px; background: var(--accent); color: #0c0c0e; border: none; border-radius: var(--r-pill); font-weight: 700; font-size: 12px; cursor: pointer; transition: transform 0.15s ease;">
+                <i class="fas fa-camera"></i> Capture Screen Now
+            </button>
+        </div>
+
         <!-- Response Content -->
         <div id="response-content" class="content-area hidden">
             <!-- Split Layout -->
@@ -596,6 +631,12 @@
                     <div id="full-markdown" class="markdown-content"></div>
                 </div>
             </div>
+        </div>
+
+        <!-- Live Activity Bar -->
+        <div class="activity" style="border-radius: 0 0 var(--r-panel) var(--r-panel); position: absolute; bottom: 0; left: 0; right: 0;">
+            <span class="pulse" id="activityPulse"></span>
+            <span id="activityText">Vision ready</span>
         </div>
     </div>
 
@@ -858,6 +899,18 @@
                         updateBadge(currentSkill, currentImageType, data?.style, currentSkillConfidence, isSkillLocked);
                     });
                 }
+
+                if (window.electronAPI.onSessionCleared) {
+                    window.electronAPI.onSessionCleared(() => {
+                        const responseElement = document.getElementById('response-content');
+                        if (responseElement) responseElement.classList.add('hidden');
+                        const emptyElement = document.getElementById('empty-state');
+                        if (emptyElement) {
+                            emptyElement.classList.remove('hidden');
+                            emptyElement.style.display = 'flex';
+                        }
+                    });
+                }
                 
                 // Listen for LLM response
                 window.electronAPI.onDisplayLlmResponse(function() {
@@ -914,6 +967,18 @@
                     });
                 }
 
+                // Wire capture screen buttons
+                const captureScreenBtn = document.getElementById('capture-screen-btn');
+                const emptyCaptureBtn = document.getElementById('empty-capture-btn');
+                const triggerCapture = () => {
+                    if (window.electronAPI && window.electronAPI.takeScreenshot) {
+                        showLoadingState();
+                        window.electronAPI.takeScreenshot();
+                    }
+                };
+                if (captureScreenBtn) captureScreenBtn.addEventListener('click', triggerCapture);
+                if (emptyCaptureBtn) emptyCaptureBtn.addEventListener('click', triggerCapture);
+
                 // Initialize default action bar
                 updateActionBar('dsa');
                 
@@ -926,7 +991,13 @@
         function showLoadingState() {
             const loadingElement = document.getElementById('loading');
             const responseElement = document.getElementById('response-content');
+            const emptyElement = document.getElementById('empty-state');
             
+            if (emptyElement) {
+                emptyElement.classList.add('hidden');
+                emptyElement.style.display = 'none';
+            }
+
             if (loadingElement) {
                 loadingElement.classList.remove('hidden');
                 loadingElement.style.display = ''; // Remove any forced display styles
@@ -994,6 +1065,12 @@
             
             if (responseElement) {
                 responseElement.classList.remove('hidden');
+            }
+
+            const emptyElement = document.getElementById('empty-state');
+            if (emptyElement) {
+                emptyElement.classList.add('hidden');
+                emptyElement.style.display = 'none';
             }
 
             // Parse the response - check both content and response properties for compatibility
@@ -1376,21 +1453,75 @@
             const responseElement = document.getElementById('response-content');
         };
 
-        // Close button handler
+        // Smog-grade panel controls (close, detach, mode segmented, blackout, activity)
         (function(){
             const btn = document.getElementById('close-window-btn');
             if (btn) {
                 btn.addEventListener('click', () => {
                     try {
-                        if (window.electronAPI && window.electronAPI.closeWindow) {
+                        if (window.electronAPI && window.electronAPI.setActivePanel) {
+                            window.electronAPI.setActivePanel(null);
+                        } else if (window.electronAPI && window.electronAPI.closeWindow) {
                             window.electronAPI.closeWindow();
-                        } else if (window.api && window.api.send) {
-                            window.api.send('quit-app');
                         } else {
                             window.close();
                         }
                     } catch (e) {
                         try { window.close(); } catch (_) {}
+                    }
+                });
+            }
+
+            // Detach button handler
+            const detachBtn = document.getElementById('detach-btn');
+            let isVisionDetached = false;
+            if (detachBtn && window.electronAPI) {
+                detachBtn.addEventListener('click', async () => {
+                    if (isVisionDetached) {
+                        await window.electronAPI.attachPanel('vision');
+                        isVisionDetached = false;
+                        detachBtn.innerHTML = '<i class="fas fa-up-right-from-square"></i>';
+                        detachBtn.title = 'Detach panel';
+                    } else {
+                        await window.electronAPI.detachPanel('vision');
+                        isVisionDetached = true;
+                        detachBtn.innerHTML = '<i class="fas fa-arrow-down-to-bracket"></i>';
+                        detachBtn.title = 'Dock panel';
+                    }
+                });
+            }
+
+            // Segmented mode handler
+            const modeSeg = document.getElementById('visionModeSeg');
+            if (modeSeg) {
+                modeSeg.querySelectorAll('.seg-btn').forEach(b => {
+                    b.addEventListener('click', () => {
+                        modeSeg.querySelectorAll('.seg-btn').forEach(item => item.classList.remove('is-active'));
+                        b.classList.add('is-active');
+                        const mode = b.getAttribute('data-mode');
+                        console.log('[VISION] Mode changed to:', mode);
+                    });
+                });
+            }
+
+            // Blackout listener
+            if (window.electronAPI && window.electronAPI.onBlackout) {
+                window.electronAPI.onBlackout((isBlackout) => {
+                    document.documentElement.classList.toggle('blackout', isBlackout);
+                });
+            }
+
+            // Activity listener
+            if (window.electronAPI && window.electronAPI.onActivity) {
+                window.electronAPI.onActivity((data) => {
+                    const activityPulse = document.getElementById('activityPulse');
+                    const activityText = document.getElementById('activityText');
+                    if (activityText && data) {
+                        activityText.textContent = data.detail || 'Vision ready';
+                        if (activityPulse) {
+                            if (data.stage === 'idle') activityPulse.classList.remove('pulse-accent');
+                            else activityPulse.classList.add('pulse-accent');
+                        }
                     }
                 });
             }

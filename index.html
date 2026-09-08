@@ -352,37 +352,44 @@
     </style>
   </head>
   <body>
-    <div class="command-tab">
-      <div class="command-item">
-        <i class="fas fa-camera"></i>
-        <span>⌘⇧S</span>
+    <div class="hub" id="hub">
+      <span class="hub-dot non-interactive" id="statusDot" title="Interaction state (Alt+A to toggle)"></span>
+
+      <nav class="hub-tabs" role="tablist">
+        <button class="hub-tab" data-panel="listen" role="tab" id="tabListen" aria-selected="false" title="Listen (Alt+R)">
+          <i class="fas fa-microphone-lines"></i><span>Listen</span>
+          <span class="hub-live" id="listenLiveDot" hidden></span>
+        </button>
+        <button class="hub-tab" data-panel="vision" role="tab" id="tabVision" aria-selected="false" title="Vision (Cmd/Ctrl+Shift+S)">
+          <i class="fas fa-eye"></i><span>Vision</span>
+        </button>
+        <button class="hub-tab" data-panel="ask" role="tab" id="tabAsk" aria-selected="false" title="Ask (Cmd/Ctrl+Shift+C)">
+          <i class="fas fa-comment-dots"></i><span>Ask</span>
+        </button>
+        <button class="hub-tab" data-panel="notes" role="tab" id="tabNotes" aria-selected="false" title="Notes">
+          <i class="fas fa-note-sticky"></i><span>Notes</span>
+        </button>
+        <button class="hub-tab" data-panel="params" role="tab" id="tabParams" aria-selected="false" title="Params (Cmd/Ctrl+,)">
+          <i class="fas fa-sliders"></i><span>Params</span>
+        </button>
+      </nav>
+
+      <span class="hub-sep"></span>
+      <button class="interview-chip" id="interviewChip" title="Interview Mode (Alt+I)">
+        <i class="fas fa-bolt"></i>
+        <span class="dot"></span>
+        <span class="label">Interview</span>
+        <span class="timer" id="interviewTimer">00:00:00</span>
+      </button>
+      <div class="quota-chip" id="quotaChip" title="Session quota & time">
+        <b id="quotaTotal">5h</b><i>|</i><span id="quotaPct">0%</span><i>|</i>
+        <span id="quotaRest">rest 4h55m</span>
       </div>
-      <div class="command-separator"></div>
-      <div class="command-item" id="micButton">
-        <i class="fas fa-microphone"></i>
-      </div>
-      <div class="command-separator"></div>
-      <div class="command-item" id="skillIndicator">
-        <i class="fas fa-brain"></i>
-        <span>DSA</span>
-      </div>
-      <div class="command-separator"></div>
-      <div class="command-item" id="languageSelector">
-        <i class="fas fa-code"></i>
-        <select id="codingLanguage">
-          <option value="cpp">C++</option>
-          <option value="c">C</option>
-          <option value="python">Python</option>
-          <option value="java">Java</option>
-          <option value="javascript">JavaScript</option>
-        </select>
-      </div>
-      <div class="command-separator"></div>
-      <div class="command-item" id="infoButton" title="Shortcuts">
-        <i class="fas fa-circle-info"></i>
-      </div>
-      <div class="command-separator"></div>
-      <div class="status-dot non-interactive" id="statusDot"></div>
+      <button class="hub-icon" id="hubMore" title="Global Shortcuts"><i class="fas fa-ellipsis"></i></button>
+
+      <!-- Backwards compatibility stubs -->
+      <div id="micButton" style="display:none;"></div>
+      <div id="skillIndicator" style="display:none;"><span>DSA</span></div>
     </div>
 
   <!-- Shortcuts Popover (hidden by default via CSS) -->
@@ -398,6 +405,62 @@
           </tr>
         </thead>
         <tbody>
+          <tr style="background: rgba(16, 185, 129, 0.08);">
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">I</span>
+            </td>
+            <td><b>Interview Mode</b> (prompter, speech, notes)</td>
+          </tr>
+          <tr style="background: rgba(239, 68, 68, 0.08);">
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">Space</span> / <span class="kbd">Alt</span> + <span class="kbd">Q</span>
+            </td>
+            <td><b>Panic Hide</b> (&lt;16ms stealth toggle)</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">A</span>
+            </td>
+            <td>Toggle Autopilot / Click-through</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">S</span>
+            </td>
+            <td>Capture screen &amp; auto-crop problem</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">D</span> / <span class="kbd">Alt</span> + <span class="kbd">F</span>
+            </td>
+            <td>Deeper dive / Shorter bullet</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">C</span>
+            </td>
+            <td>Copy last code / headline</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">W</span>
+            </td>
+            <td>Push-to-Ask (whisper prompt)</td>
+          </tr>
+          <tr>
+            <td>
+              <span class="kbd">Alt</span>
+              + <span class="kbd">1</span> / <span class="kbd">2</span> / <span class="kbd">3</span>
+            </td>
+            <td>Opacity levels (25% / 60% / 100%)</td>
+          </tr>
           <tr>
             <td>
               <span class="kbd">Ctrl/Cmd</span>

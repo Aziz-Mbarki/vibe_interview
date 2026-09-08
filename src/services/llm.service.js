@@ -4,6 +4,94 @@ const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
 const { skillRouterService } = require('./skill-router.service');
 
+let electronClipboard = null;
+try {
+  electronClipboard = require('electron').clipboard;
+} catch (_) {}
+
+class LatencyTracker {
+  constructor(maxSamples = 100) {
+    this.samples = [];
+    this.maxSamples = maxSamples;
+  }
+
+  record(ms) {
+    if (typeof ms === 'number' && ms >= 0 && ms < 60000) {
+      this.samples.push(ms);
+      if (this.samples.length > this.maxSamples) {
+        this.samples.shift();
+      }
+    }
+  }
+
+  getMetrics() {
+    if (this.samples.length === 0) {
+      return { count: 0, p50: 0, p95: 0, avg: 0, last: 0 };
+    }
+    const sorted = [...this.samples].sort((a, b) => a - b);
+    const p50Idx = Math.floor(sorted.length * 0.50);
+    const p95Idx = Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95));
+    const sum = sorted.reduce((a, b) => a + b, 0);
+
+    return {
+      count: sorted.length,
+      p50: Math.round(sorted[p50Idx]),
+      p95: Math.round(sorted[p95Idx]),
+      avg: Math.round(sum / sorted.length),
+      last: this.samples[this.samples.length - 1]
+    };
+  }
+}
+
+function parsePrompterContract(fullText) {
+  if (!fullText) return { headline: '', bullets: [], code: null, fullText: '', mode: 'SPEAK' };
+
+  let headline = '';
+  const bullets = [];
+  let code = null;
+  let language = null;
+
+  // Extract code block
+  const codeMatch = fullText.match(/```([a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+  if (codeMatch) {
+    language = codeMatch[1] ? codeMatch[1].trim() : 'text';
+    code = codeMatch[2].trim();
+  }
+
+  // Remove code block from text to parse headline and bullets cleanly
+  const prose = fullText.replace(/```(?:[a-zA-Z0-9_-]+)?\s*[\s\S]*?```/g, '').trim();
+  const lines = prose.split('\n').map(l => l.trim()).filter(Boolean);
+
+  for (const line of lines) {
+    if (/^HEADLINE:\s*/i.test(line)) {
+      headline = line.replace(/^HEADLINE:\s*/i, '').trim();
+    } else if (/^[-*•]\s+/.test(line)) {
+      bullets.push(line.replace(/^[-*•]\s+/, '').trim());
+    } else if (!headline && !line.startsWith('#') && !line.startsWith('-')) {
+      headline = line;
+    } else if (bullets.length < 3 && line.length > 5 && !line.startsWith('#')) {
+      bullets.push(line.replace(/^[-*•]\s*/, '').trim());
+    }
+  }
+
+  if (!headline && lines.length > 0) {
+    headline = lines[0].replace(/^HEADLINE:\s*/i, '');
+  }
+
+  const mode = code ? 'CODE' : 'SPEAK';
+  const badge = code ? `Ctrl+V ready · ${code.split('\n').length} lines` : null;
+
+  return {
+    headline: headline || 'Answer',
+    bullets: bullets.slice(0, 3),
+    code,
+    language,
+    mode,
+    badge,
+    fullText
+  };
+}
+
 class LLMService {
   constructor() {
     this.client = null;
@@ -11,6 +99,7 @@ class LLMService {
     this.isInitialized = false;
     this.requestCount = 0;
     this.errorCount = 0;
+    this.latencyTracker = new LatencyTracker();
     
     this.initializeClient();
   }
@@ -883,9 +972,35 @@ ${speakerContext}${copilotInstruction}
    - Above fold: 2 to 4 glanceable talking points / bullets or concise code.
    - Total budget: ≤120 words for spoken voice answers so the candidate can scan it in 3 seconds while speaking.
 4. STAY USEFUL, SOLUTION FIRST:
-   - Lead directly with what to say or the answer. No preamble ("Sure!", "Here is...").`;
+   - Lead directly with what to say or the answer. No preamble ("Sure!", "Here is...").
+5. 3-PART STRUCTURED FORMAT (For interview questions):
+   Whenever answering a question, format your response using these exact section headers:
+   ## Introduction
+   1 sentence (max 20 words) with the high-level answer.
+   ## Content
+   - 2 to 4 bullet points (max 18 words each) with specific technical points, trade-offs, or clean code snippet.
+   ## Conclusion
+   1 sentence (max 15 words) summary or takeaway.`;
 
     return basePrompt + spokenRules;
+  }
+
+  parseStructuredAnswer(rawText) {
+    if (!rawText || typeof rawText !== 'string') return null;
+    const introMatch = rawText.match(/##\s*Introduction\s*\n([\s\S]*?)(?=##\s*Content|$)/i);
+    const contentMatch = rawText.match(/##\s*Content\s*\n([\s\S]*?)(?=##\s*Conclusion|$)/i);
+    const conclusionMatch = rawText.match(/##\s*Conclusion\s*\n([\s\S]*?)$/i);
+
+    if (!introMatch && !contentMatch && !conclusionMatch) {
+      return null;
+    }
+
+    return {
+      introduction: introMatch ? introMatch[1].trim() : '',
+      content: contentMatch ? contentMatch[1].trim() : '',
+      conclusion: conclusionMatch ? conclusionMatch[1].trim() : '',
+      raw: rawText
+    };
   }
 
   formatUserMessage(text, activeSkill) {
@@ -1127,7 +1242,10 @@ ${speakerContext}${copilotInstruction}
    * as executeRequest. Accumulates and returns the full text; invokes onDelta
    * for each chunk.
    */
-  async executeStreamingRequest(geminiRequest, onDelta) {
+  async executeStreamingRequest(geminiRequest, onDelta, signal = null) {
+    if (signal && signal.aborted) {
+      throw new Error('Request aborted');
+    }
     const maxRetries = config.get('llm.gemini.maxRetries');
     const timeout = config.get('llm.gemini.timeout');
     const primaryModel = this.model;
@@ -1138,6 +1256,9 @@ ${speakerContext}${copilotInstruction}
 
     for (const modelName of modelsToTry) {
       for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        if (signal && signal.aborted) {
+          throw new Error('Request aborted');
+        }
         try {
           await this.performPreflightCheck();
 
@@ -1150,6 +1271,7 @@ ${speakerContext}${copilotInstruction}
               systemInstruction: geminiRequest.systemInstruction
             });
             for await (const chunk of stream) {
+              if (signal && signal.aborted) break;
               const piece = this._extractChunkText(chunk);
               if (piece) {
                 fullText += piece;
@@ -1162,7 +1284,19 @@ ${speakerContext}${copilotInstruction}
             setTimeout(() => reject(new Error('Request timeout')), timeout)
           );
 
-          await Promise.race([consume, timeoutPromise]);
+          const promises = [consume, timeoutPromise];
+          if (signal) {
+            promises.push(new Promise((_, reject) => {
+              if (signal.aborted) reject(new Error('Request aborted'));
+              signal.addEventListener('abort', () => reject(new Error('Request aborted')), { once: true });
+            }));
+          }
+
+          await Promise.race(promises);
+
+          if (signal && signal.aborted) {
+            throw new Error('Request aborted');
+          }
 
           if (!fullText) {
             throw new Error('Empty streamed response from Gemini API');
@@ -1176,6 +1310,9 @@ ${speakerContext}${copilotInstruction}
 
           return fullText;
         } catch (error) {
+          if (signal && signal.aborted) {
+            throw error;
+          }
           const errorInfo = this.analyzeError(error);
           lastError = error;
 
@@ -1772,6 +1909,193 @@ ${speakerContext}${copilotInstruction}
       }
     };
   }
+
+  buildAutopilotPrompt(activeSkill, programmingLanguage, mode = 'SPEAK', options = {}) {
+    const basePrompt = promptLoader.buildSystemPrompt(activeSkill, {
+      language: programmingLanguage,
+      style: mode === 'CODE' ? 'concise' : 'spoken',
+      candidateProfile: options.candidateProfile || null
+    });
+
+    if (mode === 'SPEAK') {
+      return basePrompt + `\n\n## AUTOPILOT TELEPROMPTER CONTRACT (SPEAK MODE)
+You are streaming talking points to a live peripheral prompter strip during a real interview.
+
+CANDIDATE PERSONA (CRITICAL):
+You ARE the candidate speaking directly to the interviewer. Speak in the first person ("I", "my approach", "in my experience").
+NEVER say "You should say...", "Tell the interviewer...", "As a candidate...", or meta-instructions.
+The headline and bullets must be the EXACT spoken words ready for the candidate to read aloud smoothly without stumbling.
+
+Output MUST strictly adhere to this format:
+
+HEADLINE: <one sentence thesis you open with, maximum 10 words>
+- <bullet 1, maximum 12 words>
+- <bullet 2, maximum 12 words>
+- <bullet 3, maximum 12 words>
+
+CRITICAL CONSTRAINTS:
+1. Exactly 1 HEADLINE line (prefix with "HEADLINE: "). No more than 10 words.
+2. Exactly 3 bullet points starting with "- ". Each bullet MUST be <= 12 words in natural spoken rhythm.
+3. NO introductory remarks, NO markdown titles, NO conclusion paragraph.
+4. Total response MUST be under 55 words so the candidate can silently read it in 1 second and speak it aloud cleanly.`;
+    }
+
+    const lang = programmingLanguage || 'python';
+    return basePrompt + `\n\n## AUTOPILOT CODING CONTRACT (CODE MODE)
+You are generating an immediate code solution for the candidate.
+
+CANDIDATE PERSONA:
+You ARE the candidate solving this technical problem. State your concise approach, key insight, and clean production code.
+
+Output MUST strictly adhere to this format:
+
+HEADLINE: <approach in <= 10 words, e.g. "Two pointers, O(n) time O(1) space">
+- <key insight in <= 14 words>
+- <edge case in <= 14 words>
+\`\`\`${lang}
+<complete, runnable, clean solution with minimal non-obvious comments only>
+\`\`\`
+
+CRITICAL CONSTRAINTS:
+1. Exactly 1 HEADLINE line <= 10 words.
+2. Exactly 2 bullet points <= 14 words each.
+3. Complete, bug-free, runnable code snippet in a single fenced code block.
+4. The code will be automatically copied to the candidate's clipboard so they can paste it directly.`;
+  }
+
+  async streamGroqChat(systemPrompt, userPrompt, onDelta, signal = null) {
+    const apiKey = process.env.GROQ_API_KEY;
+    if (!apiKey) throw new Error('GROQ_API_KEY not configured');
+
+    const model = process.env.GROQ_CHAT_MODEL || 'llama-3.3-70b-versatile';
+    const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ],
+        max_tokens: 180,
+        temperature: 0.5,
+        stream: true
+      }),
+      signal
+    });
+
+    if (!response.ok) {
+      throw new Error(`Groq API error: ${response.status} ${response.statusText}`);
+    }
+
+    let fullText = '';
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      if (signal && signal.aborted) break;
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop(); // Keep partial line
+
+      for (const line of lines) {
+        const clean = line.trim();
+        if (!clean || clean === 'data: [DONE]') continue;
+        if (clean.startsWith('data: ')) {
+          try {
+            const parsed = JSON.parse(clean.substring(6));
+            const delta = parsed.choices?.[0]?.delta?.content;
+            if (delta) {
+              fullText += delta;
+              if (typeof onDelta === 'function') onDelta(delta);
+            }
+          } catch (_) {}
+        }
+      }
+    }
+
+    return fullText;
+  }
+
+  async processAutopilotTurnStream(turn, activeSkill, programmingLanguage = null, options = {}, onDelta = null, signal = null) {
+    const startTime = Date.now();
+    const kind = options.kind || 'question';
+    const mode = kind === 'task' ? 'CODE' : 'SPEAK';
+    const text = typeof turn === 'string' ? turn : (turn && turn.text ? turn.text : '');
+
+    const systemPrompt = this.buildAutopilotPrompt(activeSkill, programmingLanguage, mode, options);
+    let fullText = '';
+    let firstTokenAt = null;
+
+    const deltaHandler = (delta) => {
+      if (!firstTokenAt) {
+        firstTokenAt = Date.now();
+        const latencyMs = firstTokenAt - (turn.at || startTime);
+        this.latencyTracker.record(latencyMs);
+        logger.info('[AUTOPILOT-LATENCY] First token delivered', { latencyMs });
+      }
+      if (typeof onDelta === 'function') {
+        onDelta(delta);
+      }
+    };
+
+    let usedGroq = false;
+    if (mode === 'SPEAK' && process.env.GROQ_API_KEY && !options.forceGemini) {
+      try {
+        fullText = await this.streamGroqChat(systemPrompt, text, deltaHandler, signal);
+        usedGroq = true;
+      } catch (err) {
+        if (signal && signal.aborted) throw err;
+        logger.warn('Groq fast chat stream failed, falling back to Gemini', { error: err.message });
+      }
+    }
+
+    if (!usedGroq) {
+      const geminiRequest = {
+        contents: [{ role: 'user', parts: [{ text }] }],
+        systemInstruction: { parts: [{ text: systemPrompt }] },
+        generationConfig: this.getGenerationConfig({
+          maxOutputTokens: mode === 'SPEAK' ? 180 : 1024,
+          temperature: 0.6
+        })
+      };
+      fullText = await this.executeStreamingRequest(geminiRequest, deltaHandler, signal);
+    }
+
+    const parsed = parsePrompterContract(fullText);
+
+    // Auto-clipboard for CODE mode
+    if (parsed.code && (electronClipboard || options.clipboard)) {
+      try {
+        const cp = options.clipboard || electronClipboard;
+        cp.writeText(parsed.code);
+        logger.info('Auto-copied code to clipboard for candidate', { lines: parsed.code.split('\n').length });
+      } catch (e) {
+        logger.warn('Auto-clipboard write failed', { error: e.message });
+      }
+    }
+
+    return {
+      ...parsed,
+      mode,
+      usedGroq,
+      latencyMs: firstTokenAt ? (firstTokenAt - (turn.at || startTime)) : (Date.now() - startTime)
+    };
+  }
+
+  getLatencyMetrics() {
+    return this.latencyTracker.getMetrics();
+  }
 }
 
-module.exports = new LLMService();
+const llmService = new LLMService();
+llmService.parsePrompterContract = parsePrompterContract;
+llmService.LatencyTracker = LatencyTracker;
+
+module.exports = llmService;

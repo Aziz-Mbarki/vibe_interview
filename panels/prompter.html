@@ -1,0 +1,522 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Prompter</title>
+  <link rel="stylesheet" href="../src/styles/tokens.css">
+  <link rel="stylesheet" href="../src/styles/panel.css">
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+    .prompter-container {
+      width: 100%;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+      padding: 12px 18px;
+      background: var(--surface-1);
+      backdrop-filter: var(--blur-panel);
+      -webkit-backdrop-filter: var(--blur-panel);
+      border: 1px solid var(--border-1);
+      border-radius: var(--r-panel);
+      box-shadow: var(--shadow-panel);
+      transition: opacity 400ms ease, background 200ms ease, border-color 200ms ease;
+      position: relative;
+    }
+    .prompter-container.is-stale {
+      opacity: 0.35;
+    }
+    .prompter-container.is-speculative .ph {
+      opacity: 0.55;
+      font-style: italic;
+    }
+
+    /* Main prompter view */
+    .p-view {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      width: 100%;
+    }
+
+    /* Headline */
+    .ph {
+      font: 700 16px/1.35 var(--font);
+      color: var(--text-0);
+      letter-spacing: -0.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      min-height: 22px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .ph-icon {
+      color: var(--accent);
+      font-size: 13px;
+      flex: 0 0 auto;
+    }
+
+    /* Bullets */
+    .pb {
+      margin: 0;
+      padding: 0;
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      min-height: 66px;
+    }
+    .pb li {
+      font: 500 15px/1.45 var(--font);
+      color: var(--text-1);
+      padding-left: 14px;
+      position: relative;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .pb li::before {
+      content: '';
+      position: absolute;
+      left: 3px;
+      top: 8px;
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: var(--accent);
+    }
+    .pb li.enter {
+      animation: slide 180ms cubic-bezier(.2, .8, .2, 1);
+    }
+    @keyframes slide {
+      from {
+        opacity: 0;
+        transform: translateY(4px);
+      }
+      to {
+        opacity: 1;
+        transform: none;
+      }
+    }
+
+    /* Footer */
+    .pf {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font: 500 11px/1 var(--font);
+      color: var(--text-3);
+      padding-top: 4px;
+      margin-top: 2px;
+      border-top: 1px solid var(--border-0);
+    }
+    .pf-left, .pf-right {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .status-dot {
+      width: 6px;
+      height: 6px;
+      border-radius: 50%;
+      background: var(--accent);
+      box-shadow: 0 0 6px var(--accent);
+      display: inline-block;
+      transition: background 180ms ease;
+    }
+    .status-dot.listening {
+      background: var(--info);
+      box-shadow: 0 0 6px var(--info);
+      animation: pulse 1.4s infinite;
+    }
+    .status-dot.speculative {
+      background: var(--warning);
+      box-shadow: 0 0 6px var(--warning);
+    }
+    .status-dot.busy {
+      background: var(--accent);
+      animation: pulse 0.8s infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(1.3); }
+    }
+    .copy-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 1px 7px;
+      border-radius: 999px;
+      background: color-mix(in srgb, var(--accent) 18%, transparent);
+      color: var(--accent);
+      font-weight: 700;
+      font-size: 10px;
+      letter-spacing: 0.02em;
+    }
+    .more-hint {
+      color: var(--text-3);
+      font-size: 10px;
+    }
+
+    /* Expandable Detail View */
+    .p-detail {
+      display: none;
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: var(--surface-1);
+      border-radius: var(--r-panel);
+      padding: 14px 18px;
+      overflow-y: auto;
+      z-index: 10;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .p-detail.open {
+      display: flex;
+    }
+    .p-detail-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font: 700 13px/1 var(--font);
+      color: var(--text-0);
+      border-bottom: 1px solid var(--border-1);
+      padding-bottom: 6px;
+    }
+    .p-detail-content {
+      font: 400 13px/1.6 var(--font);
+      color: var(--text-1);
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .p-detail-code {
+      font: 500 12px/1.5 var(--font-mono);
+      background: rgba(0, 0, 0, 0.4);
+      padding: 10px;
+      border-radius: var(--r-card);
+      border: 1px solid var(--border-1);
+      color: #e2e8f0;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    /* Hint bar shown on holding Alt */
+    .hint-bar {
+      position: absolute;
+      bottom: 4px;
+      left: 18px;
+      right: 18px;
+      height: 20px;
+      background: var(--surface-hud);
+      border: 1px solid var(--border-1);
+      border-radius: 999px;
+      display: flex;
+      align-items: center;
+      justify-content: space-around;
+      padding: 0 10px;
+      font: 600 9px/1 var(--font);
+      color: var(--text-2);
+      z-index: 20;
+      backdrop-filter: blur(8px);
+      animation: fadeIn 120ms ease;
+    }
+    .hint-bar kbd {
+      color: var(--accent);
+      font-weight: 700;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(3px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+  </style>
+</head>
+<body>
+  <div class="prompter-container" id="prompter">
+    <!-- Condensed Strip View -->
+    <div class="p-view" id="pView">
+      <div class="ph" id="headline">
+        <span class="ph-icon">▸</span>
+        <span id="headlineText">Autopilot Ready</span>
+      </div>
+      <ul class="pb" id="bullets">
+        <li>Listening for questions in background...</li>
+        <li>Answers appear automatically with 1 headline + 3 bullets.</li>
+        <li>Hands stay on keyboard; clicks pass through.</li>
+      </ul>
+      <div class="pf">
+        <div class="pf-left">
+          <span class="status-dot" id="statusDot" title="Autopilot state"></span>
+          <span id="stateLabel">Ready</span>
+          <span class="copy-badge" id="copyBadge" hidden>Ctrl+V ready</span>
+        </div>
+        <div class="pf-right">
+          <span id="pager">1/1</span>
+          <span class="more-hint" id="moreHint">Alt+↓ more</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Expanded Detail / Code View -->
+    <div class="p-detail" id="pDetail">
+      <div class="p-detail-head">
+        <span id="detailTitle">Full Detail</span>
+        <span style="font-size: 10px; color: var(--text-3);">Alt+↑ to return</span>
+      </div>
+      <div class="p-detail-content" id="detailContent"></div>
+    </div>
+
+    <!-- Alt-hold Cheat-Sheet Hint Bar -->
+    <div class="hint-bar" id="hintBar" hidden>
+      <span><kbd>Alt+Space</kbd> Panic Hide</span>
+      <span><kbd>Alt+S</kbd> Screen</span>
+      <span><kbd>Alt+D</kbd> Deeper</span>
+      <span><kbd>Alt+F</kbd> Shorter</span>
+      <span><kbd>Alt+C</kbd> Copy</span>
+      <span><kbd>Alt+1..3</kbd> Opacity</span>
+    </div>
+  </div>
+
+  <script>
+    (function () {
+      const container = document.getElementById('prompter');
+      const headlineText = document.getElementById('headlineText');
+      const bulletsList = document.getElementById('bullets');
+      const statusDot = document.getElementById('statusDot');
+      const stateLabel = document.getElementById('stateLabel');
+      const copyBadge = document.getElementById('copyBadge');
+      const pager = document.getElementById('pager');
+      const pDetail = document.getElementById('pDetail');
+      const detailTitle = document.getElementById('detailTitle');
+      const detailContent = document.getElementById('detailContent');
+      const hintBar = document.getElementById('hintBar');
+
+      // History buffer for Alt+Left / Alt+Right navigation
+      const history = [];
+      let historyIndex = -1;
+      let isDetailOpen = false;
+      let staleTimer = null;
+      let isSpeculative = false;
+
+      // Maximum word budgets per spec
+      const MAX_HEADLINE_WORDS = 10;
+      const MAX_BULLET_WORDS = 14;
+
+      function resetStaleTimer() {
+        container.classList.remove('is-stale');
+        clearTimeout(staleTimer);
+        staleTimer = setTimeout(() => {
+          container.classList.add('is-stale');
+        }, 25000); // 25s inactivity fade
+      }
+
+      function truncateWords(str, maxWords) {
+        if (!str) return '';
+        const words = str.trim().split(/\s+/);
+        if (words.length <= maxWords) return str;
+        return words.slice(0, maxWords).join(' ') + '...';
+      }
+
+      function updatePager() {
+        if (history.length === 0) {
+          pager.textContent = '0/0';
+        } else {
+          pager.textContent = `${historyIndex + 1}/${history.length}`;
+        }
+      }
+
+      function renderAnswer(item, isStreaming = false) {
+        resetStaleTimer();
+        if (!item) return;
+
+        // Headline
+        const rawHeadline = item.headline || 'Analyzing...';
+        headlineText.textContent = truncateWords(rawHeadline.replace(/^HEADLINE:\s*/i, ''), MAX_HEADLINE_WORDS);
+
+        // Bullets
+        bulletsList.innerHTML = '';
+        const bullets = item.bullets || [];
+        bullets.slice(0, 3).forEach((bulletText, i) => {
+          const li = document.createElement('li');
+          const cleanText = bulletText.replace(/^-\s*/, '').trim();
+          li.textContent = truncateWords(cleanText, MAX_BULLET_WORDS);
+          li.className = 'enter';
+          bulletsList.appendChild(li);
+        });
+
+        // Copy badge
+        if (item.code) {
+          const lineCount = item.code.trim().split('\n').length;
+          const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+          copyBadge.textContent = `${isMac ? '⌘V' : 'Ctrl+V'} ready · ${lineCount}L`;
+          copyBadge.hidden = false;
+        } else {
+          copyBadge.hidden = true;
+        }
+
+        // Detail view preparation
+        detailTitle.textContent = item.headline || 'Detail View';
+        let detailHtml = '';
+        if (item.bullets && item.bullets.length > 0) {
+          detailHtml += '<div style="margin-bottom:8px;">' + item.bullets.map(b => '• ' + b).join('<br>') + '</div>';
+        }
+        if (item.code) {
+          detailHtml += `<div class="p-detail-code">${escapeHtml(item.code)}</div>`;
+        }
+        if (item.fullText && !item.code && (!item.bullets || item.bullets.length === 0)) {
+          detailHtml += `<div style="font-size:13px; line-height:1.5;">${escapeHtml(item.fullText)}</div>`;
+        }
+        detailContent.innerHTML = detailHtml;
+
+        // Speculative styling
+        if (item.isSpeculative) {
+          container.classList.add('is-speculative');
+          statusDot.className = 'status-dot speculative';
+          stateLabel.textContent = 'Speculative...';
+        } else {
+          container.classList.remove('is-speculative');
+          statusDot.className = 'status-dot';
+          stateLabel.textContent = isStreaming ? 'Streaming...' : 'Ready';
+        }
+      }
+
+      function escapeHtml(text) {
+        return String(text)
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;');
+      }
+
+      function pushAnswer(item) {
+        history.push(item);
+        historyIndex = history.length - 1;
+        updatePager();
+        renderAnswer(item);
+      }
+
+      // IPC Listeners from preload
+      if (window.electronAPI) {
+        // Stream start
+        window.electronAPI.receive?.('prompter:stream-start', (data) => {
+          resetStaleTimer();
+          statusDot.className = 'status-dot busy';
+          stateLabel.textContent = 'Thinking...';
+          renderAnswer({
+            headline: data.headline || 'Generating answer...',
+            bullets: [],
+            isSpeculative: !!data.isSpeculative
+          }, true);
+        });
+
+        // Stream delta / chunk
+        window.electronAPI.receive?.('prompter:stream-delta', (data) => {
+          resetStaleTimer();
+          if (data.headline) {
+            headlineText.textContent = truncateWords(data.headline.replace(/^HEADLINE:\s*/i, ''), MAX_HEADLINE_WORDS);
+          }
+          if (data.bullets && Array.isArray(data.bullets)) {
+            bulletsList.innerHTML = '';
+            data.bullets.slice(0, 3).forEach((b) => {
+              const li = document.createElement('li');
+              li.textContent = truncateWords(b.replace(/^-\s*/, '').trim(), MAX_BULLET_WORDS);
+              bulletsList.appendChild(li);
+            });
+          }
+        });
+
+        // Final payload
+        window.electronAPI.receive?.('prompter:update', (data) => {
+          pushAnswer(data);
+        });
+
+        // No problem found escape hatch
+        window.electronAPI.receive?.('prompter:no-problem', () => {
+          pushAnswer({
+            headline: 'No problem detected',
+            bullets: [
+              'No clear coding question or stack trace found.',
+              'Alt+S to capture screen again.',
+              'Alt+W to whisper a direct question.'
+            ]
+          });
+        });
+
+        // State update
+        window.electronAPI.receive?.('prompter:state', (state) => {
+          if (state.listening) {
+            statusDot.className = 'status-dot listening';
+            stateLabel.textContent = 'Listening...';
+          } else {
+            statusDot.className = 'status-dot';
+            stateLabel.textContent = 'Ready';
+          }
+        });
+
+        // Navigation chords
+        window.electronAPI.receive?.('prompter:action', (action) => {
+          if (action === 'toggle-more') {
+            isDetailOpen = !isDetailOpen;
+            pDetail.classList.toggle('open', isDetailOpen);
+            // Request window resize if needed via IPC
+            window.electronAPI.resizeWindow?.(720, isDetailOpen ? 320 : 150);
+          } else if (action === 'close-more') {
+            isDetailOpen = false;
+            pDetail.classList.remove('open', false);
+            window.electronAPI.resizeWindow?.(720, 150);
+          } else if (action === 'prev') {
+            if (historyIndex > 0) {
+              historyIndex--;
+              updatePager();
+              renderAnswer(history[historyIndex]);
+            }
+          } else if (action === 'next') {
+            if (historyIndex < history.length - 1) {
+              historyIndex++;
+              updatePager();
+              renderAnswer(history[historyIndex]);
+            }
+          }
+        });
+
+        // Blackout mode
+        window.electronAPI.onBlackout?.((isBlackout) => {
+          document.documentElement.classList.toggle('blackout', !!isBlackout);
+        });
+      }
+
+      // Alt key detection for quick cheat-sheet hint bar
+      window.addEventListener('keydown', (e) => {
+        if (e.key === 'Alt') {
+          hintBar.hidden = false;
+        }
+      });
+      window.addEventListener('keyup', (e) => {
+        if (e.key === 'Alt') {
+          hintBar.hidden = true;
+        }
+      });
+
+      // Initial stale timer
+      resetStaleTimer();
+    })();
+  </script>
+</body>
+</html>
