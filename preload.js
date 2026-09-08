@@ -28,6 +28,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getWindowStats: () => ipcRenderer.invoke('get-window-stats'),
   
   // Phase 2 Autopilot & Interview Mode
+  getInterviewMode: () => ipcRenderer.invoke('get-interview-mode'),
   setInterviewMode: (enabled) => ipcRenderer.invoke('set-interview-mode', enabled),
   toggleAutopilot: (enabled) => ipcRenderer.invoke('toggle-autopilot', enabled),
   getLatencyMetrics: () => ipcRenderer.invoke('get-latency-metrics'),

@@ -944,6 +944,14 @@ body {
   font-style: normal;
 }
 
+.hub-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  -webkit-app-region: no-drag !important;
+  pointer-events: auto !important;
+}
+
 .interview-chip {
   display: inline-flex;
   align-items: center;
@@ -964,8 +972,8 @@ body {
   user-select: none;
 }
 
+.interview-chip,
 .interview-chip * {
-  pointer-events: none !important;
   -webkit-app-region: no-drag !important;
 }
 

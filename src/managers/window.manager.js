@@ -56,7 +56,8 @@ class WindowManager {
 
     this.windowConfigs = {
       main: {
-        width: 760,
+        width: 820,
+        maxWidth: 950,
         height: 44,
         useContentSize: true,
         file: 'index.html',
@@ -564,7 +565,7 @@ class WindowManager {
             event.preventDefault();
             // Enforce width within min/max bounds
             const minW = 60;
-            const maxW = this.windowConfigs.main.width;
+            const maxW = this.windowConfigs.main.maxWidth || this.windowConfigs.main.width || 950;
             const desiredW = Math.max(minW, Math.min(maxW, Math.round(newBounds.width || minW)));
             window.setContentSize(desiredW, Math.max(1, currentContentHeight));
           } catch (e) {
@@ -573,7 +574,7 @@ class WindowManager {
               const [__w, currentWindowHeight] = window.getSize();
               event.preventDefault();
               const minW = 60;
-              const maxW = this.windowConfigs.main.width;
+              const maxW = this.windowConfigs.main.maxWidth || this.windowConfigs.main.width || 950;
               const desiredW = Math.max(minW, Math.min(maxW, Math.round(newBounds.width || minW)));
               window.setSize(desiredW, Math.max(1, currentWindowHeight));
             } catch { /* noop */ }

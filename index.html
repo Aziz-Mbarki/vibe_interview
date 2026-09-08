@@ -349,6 +349,19 @@
       .shortcuts-footer a:hover {
         text-decoration: underline;
       }
+
+      .hub-actions {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        -webkit-app-region: no-drag !important;
+        pointer-events: auto !important;
+      }
+
+      .interview-chip,
+      .interview-chip * {
+        -webkit-app-region: no-drag !important;
+      }
     </style>
   </head>
   <body>
@@ -375,17 +388,19 @@
       </nav>
 
       <span class="hub-sep"></span>
-      <button class="interview-chip" id="interviewChip" title="Interview Mode (Alt+I)">
-        <i class="fas fa-bolt"></i>
-        <span class="dot"></span>
-        <span class="label">Interview</span>
-        <span class="timer" id="interviewTimer">00:00:00</span>
-      </button>
-      <div class="quota-chip" id="quotaChip" title="Session quota & time">
-        <b id="quotaTotal">5h</b><i>|</i><span id="quotaPct">0%</span><i>|</i>
-        <span id="quotaRest">rest 4h55m</span>
+      <div class="hub-actions" style="-webkit-app-region: no-drag !important; pointer-events: auto !important;">
+        <button class="interview-chip" id="interviewChip" type="button" title="Interview Mode (Alt+I)" style="-webkit-app-region: no-drag !important; pointer-events: auto !important; cursor: pointer !important;">
+          <i class="fas fa-bolt" style="-webkit-app-region: no-drag !important;"></i>
+          <span class="dot" style="-webkit-app-region: no-drag !important;"></span>
+          <span class="label" style="-webkit-app-region: no-drag !important;">Interview</span>
+          <span class="timer" id="interviewTimer" style="-webkit-app-region: no-drag !important;">00:00:00</span>
+        </button>
+        <div class="quota-chip" id="quotaChip" title="Session quota & time" style="-webkit-app-region: no-drag !important;">
+          <b id="quotaTotal">5h</b><i>|</i><span id="quotaPct">0%</span><i>|</i>
+          <span id="quotaRest">rest 4h55m</span>
+        </div>
+        <button class="hub-icon" id="hubMore" title="Global Shortcuts" style="-webkit-app-region: no-drag !important;"><i class="fas fa-ellipsis"></i></button>
       </div>
-      <button class="hub-icon" id="hubMore" title="Global Shortcuts"><i class="fas fa-ellipsis"></i></button>
 
       <!-- Backwards compatibility stubs -->
       <div id="micButton" style="display:none;"></div>

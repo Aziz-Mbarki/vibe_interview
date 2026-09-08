@@ -709,7 +709,7 @@ class ApplicationController {
       if (mainWindow) {
         // Enforce horizontal constraints: min ~one icon, max original width
         const minW = 60;
-        const maxW = windowManager.windowConfigs?.main?.width || 520;
+        const maxW = windowManager.windowConfigs?.main?.maxWidth || windowManager.windowConfigs?.main?.width || 950;
         const clampedWidth = Math.max(minW, Math.min(maxW, Math.round(width || minW)));
         try {
           // Match content size to the DOM so no extra transparent area remains
@@ -762,6 +762,10 @@ class ApplicationController {
 
     ipcMain.handle("set-active-panel", (event, name) => {
       return windowManager.setActivePanel(name);
+    });
+
+    ipcMain.handle("get-interview-mode", () => {
+      return !!this.isInterviewMode;
     });
 
     ipcMain.handle("set-interview-mode", async (_event, enabled) => {

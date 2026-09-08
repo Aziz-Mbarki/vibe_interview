@@ -63,6 +63,14 @@ class MainWindowUI {
             
             // Fetch speech availability
             await this.loadSpeechAvailability();
+
+            // Load current interview mode state
+            if (window.electronAPI && window.electronAPI.getInterviewMode) {
+                try {
+                    const active = await window.electronAPI.getInterviewMode();
+                    this.handleInterviewModeChanged(active);
+                } catch (_) {}
+            }
             
             this.updateSkillIndicator();
             this.updateAllElementStates(); // Update all elements with current state
@@ -263,7 +271,7 @@ class MainWindowUI {
             const hubElement = document.getElementById('hub') || document.querySelector('.hub') || document.querySelector('.command-tab');
             if (hubElement && window.electronAPI && window.electronAPI.resizeWindow) {
                 const rect = hubElement.getBoundingClientRect();
-                const width = Math.max(680, Math.ceil(rect.width + 16));
+                const width = Math.max(760, Math.ceil(rect.width + 24));
                 let height = Math.max(44, Math.ceil(rect.height + 4));
 
                 // If shortcuts popover is visible, extend height to fit it
@@ -303,23 +311,32 @@ class MainWindowUI {
 
         // Wire Interview Mode master toggle button
         if (this.interviewChip) {
+            let lastToggleTime = 0;
             const toggleInterview = async (e) => {
+                const now = Date.now();
+                if (now - lastToggleTime < 300) return;
+                lastToggleTime = now;
+
                 if (e) {
                     e.preventDefault();
                     e.stopPropagation();
                 }
+                logger.info('Interview button triggered, isInterviewActive:', this.isInterviewActive);
                 if (window.electronAPI && window.electronAPI.setInterviewMode) {
                     try {
                         const nextState = !this.isInterviewActive;
-                        logger.info('Interview button clicked -> nextState:', nextState);
-                        await window.electronAPI.setInterviewMode(nextState);
+                        const res = await window.electronAPI.setInterviewMode(nextState);
+                        this.handleInterviewModeChanged(res !== undefined ? !!res : nextState);
                     } catch (err) {
-                        logger.error('Failed to toggle interview mode', err);
+                        logger.error('Failed to toggle interview mode via button', err);
                     }
                 }
             };
+
             this.interviewChip.addEventListener('click', toggleInterview);
-            this.interviewChip.addEventListener('mousedown', (e) => e.stopPropagation());
+            this.interviewChip.addEventListener('pointerup', (e) => {
+                if (e.button === 0) toggleInterview(e);
+            });
         }
 
         // Wire Smog Hub Tabs
