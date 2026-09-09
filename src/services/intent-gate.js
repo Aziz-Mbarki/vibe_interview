@@ -56,12 +56,14 @@ function classify(turn, aggressiveness = 'balanced') {
     };
   }
 
-  // 3. WH Question
-  if (isWh && words >= (aggressiveness === 'eager' ? 2 : 4)) {
+  // 3. WH Question. Whisper frequently omits the terminal `?` on rising
+  // intonation, so we do not require a question mark here. Balanced mode
+  // accepts 3+ words (was 4) so "what is caching" still fires.
+  if (isWh && words >= (aggressiveness === 'eager' ? 2 : 3)) {
     return {
       act: 'answer',
       kind: 'question',
-      conf: 0.85,
+      conf: isQuestionMark ? 0.95 : 0.85,
       needsScreen
     };
   }

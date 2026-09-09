@@ -4,11 +4,6 @@ const config = require('../core/config');
 const { promptLoader } = require('../../prompt-loader');
 const { skillRouterService } = require('./skill-router.service');
 
-let electronClipboard = null;
-try {
-  electronClipboard = require('electron').clipboard;
-} catch (_) {}
-
 class LatencyTracker {
   constructor(maxSamples = 100) {
     this.samples = [];
@@ -43,30 +38,80 @@ class LatencyTracker {
   }
 }
 
-function parsePrompterContract(fullText) {
-  if (!fullText) return { headline: '', bullets: [], code: null, fullText: '', mode: 'SPEAK' };
+function isIncompleteBullet(text) {
+  if (!text || typeof text !== 'string') return true;
+  const t = text.trim();
+  if (!t) return true;
+  // Truncated at a hyphen / emdash, or a 1–2 letter dangling fragment
+  // (typical max_tokens cut mid-word on the last bullet).
+  if (/[-–—]$/.test(t)) return true;
+  const words = t.split(/\s+/);
+  const last = words[words.length - 1] || '';
+  if (words.length > 1 && last.length <= 2 && !/[.!?)]$/.test(t)) return true;
+  return false;
+}
 
-  let headline = '';
-  const bullets = [];
+/**
+ * Parse the HEADLINE: / bullets / fenced-code contract.
+ * ALWAYS returns something renderable — empty string, a partial stream, or a
+ * model that ignored the format entirely must never produce a blank strip.
+ * Trailing incomplete bullets (token-cap mid-word) are dropped.
+ */
+function parsePrompterContract(fullText) {
+  const renderable = (headline, bullets, extra = {}) => {
+    const code = extra.code || null;
+    const cleaned = (bullets || []).filter((b) => b && String(b).trim());
+    while (cleaned.length && isIncompleteBullet(cleaned[cleaned.length - 1])) {
+      cleaned.pop();
+    }
+    return {
+      headline: (headline && String(headline).trim()) || 'Answer',
+      bullets: cleaned.slice(0, 3),
+      code,
+      language: extra.language || null,
+      mode: code ? 'CODE' : 'SPEAK',
+      badge: code ? `Ctrl+Alt+C to copy · ${code.split('\n').length} lines` : null,
+      fullText: extra.fullText !== undefined ? extra.fullText : (fullText || ''),
+      fallback: !!extra.fallback
+    };
+  };
+
+  if (fullText == null || String(fullText).trim() === '') {
+    return renderable(
+      'Waiting for answer',
+      [
+        'The model returned an empty response.',
+        'Ask again or capture the screen.',
+        'Nothing to display yet.'
+      ],
+      { fullText: fullText || '', fallback: true }
+    );
+  }
+
+  const raw = String(fullText);
   let code = null;
   let language = null;
 
-  // Extract code block
-  const codeMatch = fullText.match(/```([a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
+  const codeMatch = raw.match(/```([a-zA-Z0-9_-]+)?\s*([\s\S]*?)```/);
   if (codeMatch) {
     language = codeMatch[1] ? codeMatch[1].trim() : 'text';
     code = codeMatch[2].trim();
   }
 
-  // Remove code block from text to parse headline and bullets cleanly
-  const prose = fullText.replace(/```(?:[a-zA-Z0-9_-]+)?\s*[\s\S]*?```/g, '').trim();
+  const prose = raw.replace(/```(?:[a-zA-Z0-9_-]+)?\s*[\s\S]*?```/g, '').trim();
   const lines = prose.split('\n').map(l => l.trim()).filter(Boolean);
+
+  let headline = '';
+  const bullets = [];
+  let sawContract = false;
 
   for (const line of lines) {
     if (/^HEADLINE:\s*/i.test(line)) {
       headline = line.replace(/^HEADLINE:\s*/i, '').trim();
+      sawContract = true;
     } else if (/^[-*•]\s+/.test(line)) {
       bullets.push(line.replace(/^[-*•]\s+/, '').trim());
+      sawContract = true;
     } else if (!headline && !line.startsWith('#') && !line.startsWith('-')) {
       headline = line;
     } else if (bullets.length < 3 && line.length > 5 && !line.startsWith('#')) {
@@ -78,18 +123,30 @@ function parsePrompterContract(fullText) {
     headline = lines[0].replace(/^HEADLINE:\s*/i, '');
   }
 
-  const mode = code ? 'CODE' : 'SPEAK';
-  const badge = code ? `Ctrl+V ready · ${code.split('\n').length} lines` : null;
+  // Model ignored the contract: treat first sentence as headline, rest as bullets.
+  // Never show a broken empty panel.
+  if (!sawContract && prose) {
+    const sentences = prose.split(/(?<=[.!?])\s+/).map(s => s.trim()).filter(Boolean);
+    if (!headline && sentences[0]) headline = sentences[0];
+    if (bullets.length === 0 && sentences.length > 1) {
+      bullets.push(...sentences.slice(1, 4));
+    } else if (bullets.length === 0 && lines.length > 1) {
+      bullets.push(...lines.slice(1, 4));
+    }
+  }
 
-  return {
-    headline: headline || 'Answer',
-    bullets: bullets.slice(0, 3),
+  if (!headline) headline = 'Answer';
+  if (bullets.length === 0 && prose && prose !== headline) {
+    const rest = prose.replace(headline, '').trim();
+    if (rest) bullets.push(rest.slice(0, 180));
+  }
+
+  return renderable(headline, bullets, {
     code,
     language,
-    mode,
-    badge,
-    fullText
-  };
+    fullText: raw,
+    fallback: !sawContract
+  });
 }
 
 class LLMService {
@@ -135,7 +192,7 @@ class LLMService {
   getGenerationConfig(overrides = {}) {
     const defaults = config.get('llm.gemini.generation') || {};
     const fallback = {
-      temperature: 0.7,
+      temperature: 0.3,
       topK: 40,
       topP: 0.95,
       maxOutputTokens: 4096
@@ -246,12 +303,18 @@ class LLMService {
 
       const base64 = imageBuffer.toString('base64');
 
+      const imageInstruction = this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle);
+      const customInstruction = (options.customInstruction && String(options.customInstruction).trim()) || '';
+      const instructionText = customInstruction
+        ? `${imageInstruction}\n\n## SCREEN READING RULES\n${customInstruction}`
+        : imageInstruction;
+
       const request = {
         contents: [
           {
             role: 'user',
             parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle) },
+              { text: instructionText },
               { inlineData: { data: base64, mimeType } }
             ]
           }
@@ -370,12 +433,18 @@ class LLMService {
 
       const base64 = imageBuffer.toString('base64');
 
+      const imageInstruction = this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle);
+      const customInstruction = (options.customInstruction && String(options.customInstruction).trim()) || '';
+      const instructionText = customInstruction
+        ? `${imageInstruction}\n\n## SCREEN READING RULES\n${customInstruction}`
+        : imageInstruction;
+
       const request = {
         contents: [
           {
             role: 'user',
             parts: [
-              { text: this.formatImageInstruction(activeSkill, programmingLanguage, lockedSkill, answerStyle) },
+              { text: instructionText },
               { inlineData: { data: base64, mimeType } }
             ]
           }
@@ -489,9 +558,11 @@ class LLMService {
     return `Analyze this screenshot for a live interview.
 First line of your reply MUST be:
 SKILL: <dsa|system-design|behavioral|tech-qa|general> | TYPE: <coding_problem|error_traceback|terminal_output|diagram|mcq_quiz|doc_text|whiteboard|ui_bug|unknown> | CONF: <0.0-1.0>
-Second line onward: THE SOLUTION, immediately (no restating the problem, no preamble).
+Second line onward: THE CORRECT SOLUTION, immediately (no restating the problem, no preamble, no "the screenshot shows").
 ${lockDirective}
-If ambiguous, state your assumption in ONE short line ("Assuming: ..."), then solve. Never ask what to do — solve.${langNote}`;
+Read the FULL problem: title, examples, constraints, and any starter signature. Solve THAT problem, not a similar one you remember. If starter code exists, implement that signature exactly.
+If ambiguous, state your assumption in ONE short line ("Assuming: ..."), then solve completely. Never ask what to do — solve.
+Code must be complete and compiling. Handle empty / n=1 / duplicates / overflow. State the true complexity of the code you wrote.${langNote}`;
   }
 
   async processTextWithSkill(text, activeSkill, sessionMemory = [], programmingLanguage = null, options = {}) {
@@ -965,22 +1036,16 @@ ${speakerContext}${copilotInstruction}
      NEVER output a full essay or paragraph for greetings.
      NEVER ask a question back.
 2. AMBIGUITY & FRAGMENT RECONSTRUCTION:
-   - If the transcript is a cut-off fragment or half-sentence: Pick the most probable question, state your assumption in ONE short italic line ("*Assuming you asked: ...*"), then give the full direct answer.
+   - If the transcript is a cut-off fragment or half-sentence: Pick the most common interview question that fragment would be, state it in ONE italic line ("*Assuming you asked: ...*"), then give the full CORRECT answer to that question.
    - NEVER say "Could you please repeat that?" or "Can you clarify?".
 3. TELEPROMPTER ORDERING (GLANCE-FIRST):
-   - Line 1: 5-second opening hook (the verdict, key idea, or script opener). The candidate speaks this first.
-   - Above fold: 2 to 4 glanceable talking points / bullets or concise code.
-   - Total budget: ≤120 words for spoken voice answers so the candidate can scan it in 3 seconds while speaking.
-4. STAY USEFUL, SOLUTION FIRST:
-   - Lead directly with what to say or the answer. No preamble ("Sure!", "Here is...").
-5. 3-PART STRUCTURED FORMAT (For interview questions):
-   Whenever answering a question, format your response using these exact section headers:
-   ## Introduction
-   1 sentence (max 20 words) with the high-level answer.
-   ## Content
-   - 2 to 4 bullet points (max 18 words each) with specific technical points, trade-offs, or clean code snippet.
-   ## Conclusion
-   1 sentence (max 15 words) summary or takeaway.`;
+   - Line 1: the correct opening the candidate should say first (verdict / thesis).
+   - Above fold: 2 to 4 true talking points, or complete code if it is a coding question.
+   - Spoken answers ≤120 words. Coding answers: short approach + complete fenced solution.
+4. CORRECTNESS:
+   - Do not invent APIs, complexity, metrics, or employers.
+   - Prefer the standard right answer over a punchy wrong one.
+   - No preamble ("Sure!", "Here is..."). No repeating the question.`;
 
     return basePrompt + spokenRules;
   }
@@ -1004,7 +1069,7 @@ ${speakerContext}${copilotInstruction}
   }
 
   formatUserMessage(text, activeSkill) {
-    return `Context: ${activeSkill.toUpperCase()} analysis request\n\nText to analyze:\n${text}`;
+    return `Live ${activeSkill} interview question — answer correctly and directly:\n\n${text}`;
   }
 
   async executeRequest(geminiRequest) {
@@ -1928,16 +1993,17 @@ The headline and bullets must be the EXACT spoken words ready for the candidate 
 
 Output MUST strictly adhere to this format:
 
-HEADLINE: <one sentence thesis you open with, maximum 10 words>
-- <bullet 1, maximum 12 words>
-- <bullet 2, maximum 12 words>
-- <bullet 3, maximum 12 words>
+HEADLINE: <correct thesis the candidate opens with>
+- <true supporting point>
+- <true supporting point>
+- <true supporting point or the key caveat>
 
 CRITICAL CONSTRAINTS:
-1. Exactly 1 HEADLINE line (prefix with "HEADLINE: "). No more than 10 words.
-2. Exactly 3 bullet points starting with "- ". Each bullet MUST be <= 12 words in natural spoken rhythm.
-3. NO introductory remarks, NO markdown titles, NO conclusion paragraph.
-4. Total response MUST be under 55 words so the candidate can silently read it in 1 second and speak it aloud cleanly.`;
+1. Exactly 1 HEADLINE line (prefix with "HEADLINE: "). Aim for ~12 words. Never a wrong slogan.
+2. Exactly 3 bullet points starting with "- ". Aim for ~16 words each. Completeness beats the cap: do not drop the fact that makes the answer right.
+3. NO introductory remarks, NO markdown titles, NO conclusion paragraph, NO invented APIs/metrics/employers.
+4. Prefer the standard correct interview answer over a punchy wrong one. If the question is ambiguous, first bullet may start with "Assuming …" then answer that.
+5. Never ask a question back.`;
     }
 
     const lang = programmingLanguage || 'python';
@@ -1949,18 +2015,18 @@ You ARE the candidate solving this technical problem. State your concise approac
 
 Output MUST strictly adhere to this format:
 
-HEADLINE: <approach in <= 10 words, e.g. "Two pointers, O(n) time O(1) space">
-- <key insight in <= 14 words>
-- <edge case in <= 14 words>
+HEADLINE: <correct approach + true complexity of THIS code>
+- <why this is correct>
+- <the edge case that usually fails>
 \`\`\`${lang}
-<complete, runnable, clean solution with minimal non-obvious comments only>
+<complete compiling solution matching any starter signature; comments only on the invariant>
 \`\`\`
 
 CRITICAL CONSTRAINTS:
-1. Exactly 1 HEADLINE line <= 10 words.
-2. Exactly 2 bullet points <= 14 words each.
-3. Complete, bug-free, runnable code snippet in a single fenced code block.
-4. The code will be automatically copied to the candidate's clipboard so they can paste it directly.`;
+1. Exactly 1 HEADLINE line. Complexity must match the code you write. Never invent APIs.
+2. Exactly 2 bullet points. Prefer a slightly longer true bullet over a short wrong one.
+3. Complete, compiling, runnable code in one fenced block. Match the required signature (name, params, return, in-place vs new). Handle empty / n=1 / duplicates / overflow. No TODO, no omitted branches, no pseudocode.
+4. Solve the stated problem, not a similar one you remember. Do not instruct the candidate to paste in one keystroke — they copy with Ctrl+Alt+C.`;
   }
 
   async streamGroqChat(systemPrompt, userPrompt, onDelta, signal = null) {
@@ -1980,8 +2046,8 @@ CRITICAL CONSTRAINTS:
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt }
         ],
-        max_tokens: 180,
-        temperature: 0.5,
+        max_tokens: 280,
+        temperature: 0.3,
         stream: true
       }),
       signal
@@ -2061,25 +2127,15 @@ CRITICAL CONSTRAINTS:
         contents: [{ role: 'user', parts: [{ text }] }],
         systemInstruction: { parts: [{ text: systemPrompt }] },
         generationConfig: this.getGenerationConfig({
-          maxOutputTokens: mode === 'SPEAK' ? 180 : 1024,
-          temperature: 0.6
+          maxOutputTokens: mode === 'SPEAK' ? 280 : 2048,
+          temperature: mode === 'CODE' ? 0.2 : 0.3
         })
       };
       fullText = await this.executeStreamingRequest(geminiRequest, deltaHandler, signal);
     }
 
     const parsed = parsePrompterContract(fullText);
-
-    // Auto-clipboard for CODE mode
-    if (parsed.code && (electronClipboard || options.clipboard)) {
-      try {
-        const cp = options.clipboard || electronClipboard;
-        cp.writeText(parsed.code);
-        logger.info('Auto-copied code to clipboard for candidate', { lines: parsed.code.split('\n').length });
-      } catch (e) {
-        logger.warn('Auto-clipboard write failed', { error: e.message });
-      }
-    }
+    // Explicit copy only (Ctrl+Alt+C). Auto-clipboard is a visible tell.
 
     return {
       ...parsed,

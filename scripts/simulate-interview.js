@@ -10,10 +10,11 @@
  */
 
 const assert = require('assert');
-const { TurnAggregator } = require('../src/services/turn-aggregator');
+const { TurnAggregator, looksSpeculativeReady, TRAILING_INCOMPLETE } = require('../src/services/turn-aggregator');
 const intentGate = require('../src/services/intent-gate');
 const roiService = require('../src/services/roi.service');
 const { parsePrompterContract, LatencyTracker } = require('../src/services/llm.service');
+const { LIVE_CHORDS } = require('../src/core/shortcuts');
 
 let passedTests = 0;
 let totalTests = 0;
@@ -87,28 +88,37 @@ test('TurnAggregator ignores speaker: "you"', () => {
   assert.strictEqual(emitted, null, 'Should never emit user speaker utterances');
 });
 
-test('TurnAggregator triggers speculative start and cancel callbacks', () => {
+test('TurnAggregator triggers speculative start only on complete first fragments', () => {
   let specStartCalled = false;
   let specCancelCalled = false;
 
   const agg = new TurnAggregator(() => {}, {
     onSpeculativeStart: (text) => {
       specStartCalled = true;
-      assert.strictEqual(text, 'What is CAP theorem');
+      assert.strictEqual(text, 'What is CAP theorem?');
     },
     onSpeculativeCancel: () => {
       specCancelCalled = true;
     }
   });
 
-  // First fragment triggers speculative start
-  agg.push({ text: 'What is CAP theorem', speaker: 'them', at: 1000 });
-  assert.strictEqual(specStartCalled, true, 'Speculative start must be triggered on fragment 1');
+  // Complete question (ends in ?) triggers speculative start
+  agg.push({ text: 'What is CAP theorem?', speaker: 'them', at: 1000 });
+  assert.strictEqual(specStartCalled, true, 'Speculative start must fire on a complete first fragment');
   assert.strictEqual(specCancelCalled, false);
 
-  // Addition fragment triggers speculative cancel
   agg.push({ text: 'and how does DynamoDB handle it', speaker: 'them', at: 1500 });
   assert.strictEqual(specCancelCalled, true, 'Speculative cancel must be triggered on addition');
+  agg.cancel();
+});
+
+test('TurnAggregator does not speculate on dangling-preposition fragments', () => {
+  let specStartCalled = false;
+  const agg = new TurnAggregator(() => {}, {
+    onSpeculativeStart: () => { specStartCalled = true; }
+  });
+  agg.push({ text: 'Tell me about', speaker: 'them', at: 1000 });
+  assert.strictEqual(specStartCalled, false, 'Fragments ending on a dangling preposition must wait');
   agg.cancel();
 });
 
@@ -315,6 +325,117 @@ test('LatencyTracker accurately calculates p50 and p95 metrics', () => {
   assert.ok(metrics.p50 > 0);
   assert.ok(metrics.p95 >= metrics.p50);
   assert.ok(metrics.avg > 0);
+});
+
+
+// --------------------------------------------------------------------------
+// 6. PARSE FALLBACKS, SPECULATION GATES, SHORTCUTS, TIGHTER dHASH
+// --------------------------------------------------------------------------
+console.log('\n--- 6. Parse fallbacks, speculation gates, chords, dHash ---');
+
+test('parsePrompterContract always returns something renderable for empty input', () => {
+  const parsed = parsePrompterContract('');
+  assert.ok(parsed && typeof parsed.headline === 'string' && parsed.headline.length > 0);
+  assert.ok(Array.isArray(parsed.bullets) && parsed.bullets.length > 0);
+  assert.ok(parsed.fallback === true);
+});
+
+test('parsePrompterContract always returns something renderable for a partial stream', () => {
+  const parsed = parsePrompterContract('HEADLINE: Two pointers');
+  assert.ok(parsed.headline.includes('Two pointers'));
+  assert.ok(Array.isArray(parsed.bullets));
+  assert.ok(parsed.headline.length > 0);
+});
+
+test('parsePrompterContract falls back when the model ignores the format', () => {
+  const parsed = parsePrompterContract('Hash maps give O(1) average lookup. Watch duplicate keys. Return the pair of indices.');
+  assert.ok(parsed.headline && parsed.headline.length > 0);
+  assert.ok(parsed.bullets.length >= 1, 'Unstructured prose should become glanceable bullets');
+  assert.ok(parsed.fallback === true);
+});
+
+test('parsePrompterContract drops a trailing incomplete bullet', () => {
+  const raw = `HEADLINE: Two pointers approach, O(N) time O(1) space
+- Left and right pointers converge toward center
+- Swap mismatched elements when pointers satisfy parity
+- Handle empty or single el`;
+  const parsed = parsePrompterContract(raw);
+  assert.ok(parsed.bullets.length <= 2, `Expected truncated last bullet dropped, got ${parsed.bullets.length}: ${JSON.stringify(parsed.bullets)}`);
+  parsed.bullets.forEach((b) => {
+    const last = b.trim().split(/\s+/).pop();
+    assert.ok(last.length > 2, `Kept incomplete fragment: ${b}`);
+  });
+});
+
+test('looksSpeculativeReady requires ? or high-confidence classify, not dangling preps', () => {
+  assert.strictEqual(looksSpeculativeReady('What is CAP theorem?'), true);
+  assert.strictEqual(looksSpeculativeReady('Tell me about'), false);
+  assert.strictEqual(looksSpeculativeReady('Implement a binary search tree'), true);
+  assert.ok(TRAILING_INCOMPLETE.test('Tell me about'));
+});
+
+test('IntentGate answers Whisper WH questions without a terminal ?', () => {
+  const res = intentGate.classify('what is caching');
+  assert.strictEqual(res.act, 'answer');
+  assert.strictEqual(res.kind, 'question');
+  assert.ok(res.conf < 0.9, 'Without ? confidence stays below the speculate floor');
+  assert.strictEqual(looksSpeculativeReady('what is caching'), false);
+});
+
+test('LIVE_CHORDS live on Ctrl+Alt, not bare Alt', () => {
+  const values = Object.values(LIVE_CHORDS);
+  assert.ok(values.length > 0);
+  for (const accel of values) {
+    assert.ok(accel.startsWith('Ctrl+Alt+'), `Expected Ctrl+Alt namespace, got ${accel}`);
+    assert.ok(!/^Alt\+[A-Z0-9]/.test(accel), `Bare Alt chord leaked: ${accel}`);
+  }
+  assert.strictEqual(LIVE_CHORDS.copy, 'Ctrl+Alt+C');
+  assert.strictEqual(LIVE_CHORDS.ask, 'Ctrl+Alt+W');
+  assert.strictEqual(LIVE_CHORDS.speech, 'Ctrl+Alt+R');
+});
+
+test('dHash Hamming 3 is not a duplicate at text threshold 2', () => {
+  const a = '0'.repeat(64);
+  const b = '111' + '0'.repeat(61);
+  assert.strictEqual(roiService.hammingDistance(a, b), 3);
+  roiService.lastHash = a;
+  assert.strictEqual(roiService.isDuplicateFrame(b, roiService.TEXT_DHASH_THRESHOLD || 2), false);
+  roiService.resetHash();
+});
+
+test('ROI findTextRegion handles 10 synthetic cluttered frames', () => {
+  const layouts = [
+    { w: 800, h: 600, cx: 80, cy: 70, cw: 420, ch: 380 },
+    { w: 1280, h: 720, cx: 200, cy: 90, cw: 720, ch: 480 },
+    { w: 960, h: 540, cx: 120, cy: 80, cw: 700, ch: 360 },
+    { w: 640, h: 480, cx: 40, cy: 40, cw: 400, ch: 320 },
+    { w: 1024, h: 768, cx: 180, cy: 140, cw: 620, ch: 440 },
+    { w: 800, h: 500, cx: 60, cy: 50, cw: 500, ch: 320 },
+    { w: 1100, h: 700, cx: 150, cy: 100, cw: 640, ch: 420 },
+    { w: 720, h: 480, cx: 90, cy: 60, cw: 420, ch: 300 },
+    { w: 1400, h: 900, cx: 220, cy: 160, cw: 800, ch: 520 },
+    { w: 900, h: 600, cx: 100, cy: 80, cw: 520, ch: 380 }
+  ];
+
+  layouts.forEach((L, i) => {
+    const buf = Buffer.alloc(L.w * L.h * 4, 18);
+    for (let y = L.cy; y < L.cy + L.ch; y++) {
+      for (let x = L.cx; x < L.cx + L.cw; x++) {
+        const idx = (y * L.w + x) * 4;
+        const val = ((x + y) % 5 === 0) ? 240 : 40;
+        buf[idx] = val;
+        buf[idx + 1] = val;
+        buf[idx + 2] = val;
+        buf[idx + 3] = 255;
+      }
+    }
+    const roi = roiService.findTextRegion(buf, L.w, L.h, 4);
+    assert.ok(roi, `layout ${i} should return an ROI`);
+    assert.ok(roi.width > 0 && roi.height > 0, `layout ${i} empty ROI`);
+    if (roi.isCropped) {
+      assert.ok(roi.width < L.w || roi.height < L.h, `layout ${i} claimed crop but kept full frame`);
+    }
+  });
 });
 
 console.log('\n========================================');

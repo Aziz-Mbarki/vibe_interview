@@ -298,6 +298,8 @@ class MainWindowUI {
         this.hubMore = document.getElementById('hubMore') || document.getElementById('infoButton');
         this.shortcutsPopover = document.getElementById('shortcutsPopover');
         this.quotaChip = document.getElementById('quotaChip');
+        this.shortcutWarn = document.getElementById('shortcutWarn');
+        this.shortcutsWarnBanner = document.getElementById('shortcutsWarnBanner');
         this.interviewChip = document.getElementById('interviewChip');
         this.interviewTimer = document.getElementById('interviewTimer');
         this.isInterviewActive = false;
@@ -350,11 +352,19 @@ class MainWindowUI {
             });
         }
 
+        if (this.shortcutWarn) {
+            this.shortcutWarn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.showShortcutsPopover();
+            });
+        }
+
         // Hub more / Shortcuts popover
         if (this.hubMore && this.shortcutsPopover) {
             this.hubMore.addEventListener('click', (e) => {
                 e.stopPropagation();
                 this.shortcutsPopover.classList.toggle('show');
+                this.shortcutsPopover.classList.toggle('is-open');
             });
             document.addEventListener('click', (e) => {
                 if (this.shortcutsPopover && !this.shortcutsPopover.contains(e.target) && e.target !== this.hubMore) {
@@ -548,6 +558,19 @@ class MainWindowUI {
                 });
             }
 
+            if (window.electronAPI.onShortcutRegistrationFailed) {
+                window.electronAPI.onShortcutRegistrationFailed((data) => {
+                    this.handleShortcutFailures(data);
+                });
+            }
+            if (window.electronAPI.getFailedShortcuts) {
+                window.electronAPI.getFailedShortcuts().then((failed) => {
+                    if (failed && failed.length) {
+                        this.handleShortcutFailures({ failed });
+                    }
+                }).catch(() => {});
+            }
+
             // Interview mode listener
             if (window.electronAPI.onInterviewModeChanged) {
                 window.electronAPI.onInterviewModeChanged((data) => {
@@ -603,9 +626,9 @@ class MainWindowUI {
                 this.loadSpeechAvailability();
             });
             
-            // Global keyboard shortcuts
+            // Global keyboard shortcuts (renderer-local; live chords are Ctrl+Alt in main)
             document.addEventListener('keydown', (e) => {
-                if (e.altKey && e.key === 'r' && this.isInteractive) {
+                if (e.ctrlKey && e.altKey && (e.key === 'r' || e.key === 'R') && this.isInteractive) {
                     e.preventDefault();
                     if (!this.speechAvailable) return; // guard when unavailable
                     if (this.isRecording) {
@@ -1070,7 +1093,7 @@ class MainWindowUI {
                         
             const tooltip = this.isInteractive ? 
                 `${baseName} ${this.isSkillLocked ? '(Locked)' : ''} - Click / ⌘↑↓ to cycle, Right-click to lock` : 
-                `${baseName} ${this.isSkillLocked ? '(Locked)' : ''} - Enable interactive mode (Alt+A) to navigate`;
+                `${baseName} ${this.isSkillLocked ? '(Locked)' : ''} - Enable interactive mode (Ctrl+Shift+I) to navigate`;
             this.skillIndicator.title = tooltip;
             
             // Add visual feedback for skill change
@@ -1524,6 +1547,24 @@ class MainWindowUI {
         if (!this.shortcutsPopover) return;
         if (this._popoverHideTimeout) clearTimeout(this._popoverHideTimeout);
         this._popoverHideTimeout = setTimeout(() => this.hideShortcutsPopover(), 180);
+    }
+
+    handleShortcutFailures(data) {
+        const failed = (data && data.failed) || [];
+        if (!failed.length) return;
+        const msg = data.message || `Hotkey conflict: ${failed.join(', ')} did not register.`;
+        if (this.shortcutWarn) {
+            this.shortcutWarn.hidden = false;
+            this.shortcutWarn.classList.add('is-visible');
+            this.shortcutWarn.title = msg;
+            this.shortcutWarn.textContent = `⚠ ${failed.length} hotkey${failed.length === 1 ? '' : 's'} failed`;
+        }
+        if (this.shortcutsWarnBanner) {
+            this.shortcutsWarnBanner.classList.add('is-visible');
+            this.shortcutsWarnBanner.textContent = msg + ' Discovering a dead hotkey mid-interview is the worst possible time.';
+        }
+        this.showNotification(msg, 'error');
+        logger.warn('Shortcut registration failures surfaced in hub', { failed });
     }
 }
 

@@ -76,8 +76,8 @@ HARD RULES:
    sentence, greeting, ambiguous question) — produce the most useful best-effort response.
    NEVER refuse, NEVER say you need more information, NEVER stall.
 2. NEVER ASK QUESTIONS BACK. The candidate cannot converse with you mid-interview. If the
-   input is ambiguous: pick the most likely intent, state your assumption in ONE short line
-   ("*Assuming: …*"), then answer fully. No clarifying questions, ever.
+   input is ambiguous: pick the most common interview reading, state it in ONE short line
+   ("*Assuming: …*"), then answer that fully. No clarifying questions, ever.
 3. SOLUTION FIRST. Lead with the usable answer (the code / the fix / the one-line answer /
    the spoken script), THEN supporting explanation. The candidate may only read your first lines.
 4. GLANCEABLE. Short, scannable, low-word-count. Bullets over paragraphs. No preamble
@@ -86,7 +86,13 @@ HARD RULES:
    the key result above the fold; details go after, clearly separated.
 5. STAY USEFUL, STAY FREE. Use your full reasoning freely — code, debug, design, explain,
    suggest, compare. The skill section below only sets FORMAT and FOCUS, not limits on
-   what you may do to help the candidate succeed right now.`;
+   what you may do to help the candidate succeed right now.
+6. CORRECTNESS OVER SPEED. A short wrong answer is worse than a slightly longer right one.
+   - Never invent APIs, Big-O, metrics, employers, constraints, or signatures that are not in the input.
+   - Prefer the standard interview-optimal solution over a clever trick that is easy to get wrong.
+   - Code must compile, match the required signature, and handle empty / n=1 / duplicates / overflow.
+   - Numbers (QPS, storage, complexity) must be internally consistent with the rest of the answer.
+   - If you cannot be sure, pick the most common reading, mark "*Assuming:*", and solve that completely.`;
   }
 
   /**
@@ -194,29 +200,31 @@ HARD RULES:
       case 'spoken':
         styleBlock = `\n\n## ANSWER STYLE: SPOKEN / TELEPROMPTER
 Candidate reads this WHILE talking — every extra sentence is a risk.
-1. Line 1 = 5-second opening hook (say this first immediately to buy time and sound confident).
-2. Above the fold = 3-5 glanceable bullets (Situation, Task, Action, Result with numbers) + one-line closer.
-3. Target 45-75 seconds spoken (~120-180 words). No markdown tables. Conversational first-person ("I").`;
+1. Line 1 = the correct opening (verdict / thesis / first sentence they should say).
+2. Above the fold = 3-5 true, specific bullets. No invented metrics.
+3. Target 45-75 seconds spoken (~120-180 words). No tables. First person ("I").
+Correctness beats brevity: do not drop the fact that makes the answer right.`;
         break;
 
       case 'structured':
         styleBlock = `\n\n## ANSWER STYLE: STRUCTURED (System Design & Architecture)
-1. Line 1 = Direct high-level vision and architecture verdict.
+1. Line 1 = Direct high-level vision that would actually work at the stated scale.
 2. Headed sections: Requirements → API → Data Model → Components → Scaling → Trade-offs.
-3. Quantify users, RPS, storage, and bandwidth with back-of-the-envelope calculations. Keep trade-offs table to 3 rows max.`;
+3. Quantify users, QPS, storage, bandwidth. Arithmetic must check out. Trade-offs: 3 rows max.`;
         break;
 
       case 'deep':
         styleBlock = `\n\n## ANSWER STYLE: DEEP
-Full technical explanation + concrete code/system example + edge cases + trade-offs. Use clear subheadings and scannable blocks.`;
+Full correct explanation + concrete code/system + edges + trade-offs. Subheadings, scannable blocks.
+Do not pad. Every extra paragraph must add a fact the interviewer can probe.`;
         break;
 
       case 'concise':
       default:
         styleBlock = `\n\n## ANSWER STYLE: CONCISE
-1. Line 1 = Direct verdict or key insight (speakable immediately).
-2. Glanceable bullets + clean code block (if requested) + time/space complexity.
-3. Keep total prose under 200 words. Solution first, zero filler.`;
+1. Line 1 = Direct correct verdict or key insight (speakable immediately).
+2. Glanceable bullets + complete code if coding + tight time/space.
+3. Prose under 200 words. Solution first. Never sacrifice a load-bearing edge case for brevity.`;
         break;
     }
 
@@ -257,12 +265,13 @@ hint, e.g. "at [Company] {insert employer}, I cut latency by {insert metric}".`;
       case 'dsa':
         languageInjection = `\n\n## IMPLEMENTATION LANGUAGE: ${languageUpper}
 STRICT REQUIREMENTS:
-- Respond ONLY in ${languageTitle}. Do not include any snippets or alternatives in other languages.
-- All code blocks must use triple backticks with the exact language tag: \`\`\`${fenceTag}\`\`\`.
-- Aim for the best possible time and space complexity; prefer optimal algorithms and data structures.
-- Provide: brief approach, then final ${languageTitle} implementation, followed by time/space complexity.
-- If the user's input is a problem statement (and does not include code), produce a complete, runnable ${languageTitle} solution without asking for clarification.
-- Avoid unnecessary verbosity; focus on correctness, clarity, and efficiency.`;
+- Respond ONLY in ${languageTitle}. No snippets or alternatives in other languages.
+- All code blocks use triple backticks with the exact tag: \`\`\`${fenceTag}\`\`\`.
+- If a starter signature exists, implement it exactly (name, params, return, in-place vs new).
+- Complete, compiling ${languageTitle}: no TODO, no omitted branches, no pseudocode.
+- Handle empty / n=1 / duplicates / negatives / overflow as the language requires.
+- Brief approach, then the full implementation, then tight time/space of THAT code.
+- Idiomatic stdlib only. Do not use APIs that do not exist in ${languageTitle}.`;
         break;
       default:
         languageInjection = `\n\n## PROGRAMMING LANGUAGE: ${languageUpper}\nAll code and examples must be in ${languageTitle}. Use code fences with tag: \`\`\`${fenceTag}\`\`\`.`;

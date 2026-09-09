@@ -11,6 +11,27 @@ const HARD_FLUSH_MS = 12000;      // Never hold a turn longer than this
 const ADDITION_STARTERS = /^(and|also|so|but|or|plus|actually|specifically|as well|what about|how about|in addition|another thing|oh)\b/i;
 const TRAILING_INCOMPLETE = /\b(the|a|an|to|for|with|about|of|in|on|is|are|would|could|like)\s*$/i;
 
+/**
+ * Speculative LLM calls cost a full request even if aborted. Only fire when
+ * the first fragment already looks complete: ends in `?`, or classify()
+ * returns conf >= 0.9 (tasks / explicit questions). Fragments that trail
+ * off on a dangling preposition are almost always continued, so speculation
+ * is wasted by construction.
+ */
+function looksSpeculativeReady(text) {
+  const t = (text || '').trim();
+  if (!t) return false;
+  if (TRAILING_INCOMPLETE.test(t)) return false;
+  if (/\?\s*$/.test(t)) return true;
+  try {
+    const { classify } = require('./intent-gate');
+    const intent = classify(t, 'balanced');
+    return intent.act === 'answer' && (intent.conf || 0) >= 0.9;
+  } catch (_) {
+    return false;
+  }
+}
+
 class TurnAggregator {
   /**
    * @param {Function} emit - Called with finalized merged turn { text, speaker, at, parts }
@@ -71,9 +92,13 @@ class TurnAggregator {
       gapMs
     });
 
-    // Notify speculative caller on the very first fragment
+    // Notify speculative caller on the very first fragment only when it
+    // already looks complete — incomplete fragments just wait for the merge.
     if (this.buf.length === 1 && this.onSpeculativeStart) {
-      this.onSpeculativeStart(utt.text.trim());
+      const first = utt.text.trim();
+      if (looksSpeculativeReady(first)) {
+        this.onSpeculativeStart(first);
+      }
     }
 
     clearTimeout(this.timer);
@@ -128,5 +153,6 @@ module.exports = {
   ADDITION_MAX_GAP_MS,
   HARD_FLUSH_MS,
   ADDITION_STARTERS,
-  TRAILING_INCOMPLETE
+  TRAILING_INCOMPLETE,
+  looksSpeculativeReady
 };

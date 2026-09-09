@@ -10,7 +10,7 @@ echo Hotkeys:
 echo   - Ctrl + Shift + C : Open / Toggle Chat Window
 echo   - Ctrl + Shift + V : Toggle Visibility
 echo   - Ctrl + Shift + S : Screenshot Capture
-echo   - Alt + R          : Toggle Speech (or Ctrl+Shift+R)
+echo   - Ctrl + Alt + R   : Toggle Speech (or Ctrl+Shift+R)
 echo   - Ctrl + ,         : Settings
 echo ===================================================
 echo.

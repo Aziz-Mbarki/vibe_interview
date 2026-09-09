@@ -101,6 +101,7 @@ const { skillRouterService } = require("./src/services/skill-router.service");
 const { promptLoader } = require("./prompt-loader");
 const { TurnAggregator } = require("./src/services/turn-aggregator");
 const intentGate = require("./src/services/intent-gate");
+const { LIVE_CHORDS } = require("./src/core/shortcuts");
 
 // Managers
 const windowManager = require("./src/managers/window.manager");
@@ -125,6 +126,8 @@ class ApplicationController {
     this.autopilotAggressiveness = "balanced";
     this.lastSpokenQuestion = null;
     this._speculativeAbortController = null;
+    this._pushToAskArmed = false;
+    this._failedShortcuts = [];
 
     // Turn Aggregator: coalesces fragments into single turns
     this.turnAggregator = new TurnAggregator(
@@ -398,8 +401,8 @@ class ApplicationController {
         logger.info("[GLOBAL-HOTKEY] Triggered: CommandOrControl+, (Settings)");
         windowManager.showSettings();
       },
-      "Alt+R": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+R (Toggle Speech)");
+      [LIVE_CHORDS.speech]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.speech} (Toggle Speech)`);
         this.toggleSpeechRecognition();
       },
       "CommandOrControl+Shift+R": () => {
@@ -446,73 +449,75 @@ class ApplicationController {
       "CommandOrControl+Left": () => this.handleLeftArrow(),
       "CommandOrControl+Right": () => this.handleRightArrow(),
 
-      // Phase 2 Left-Hand Autopilot Chords
-      "Alt+Space": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Space (Panic Hide/Show)");
+      // Phase 2 live chords — Ctrl+Alt namespace. Bare Alt+* steals
+      // browser address-bar / Windows menu mnemonics on a shared screen.
+      [LIVE_CHORDS.panic]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.panic} (Panic Hide/Show)`);
         windowManager.togglePanic();
       },
-      "Alt+A": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+A (Toggle Autopilot)");
+      [LIVE_CHORDS.autopilot]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.autopilot} (Toggle Autopilot)`);
         this.toggleAutopilot();
       },
-      "Alt+S": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+S (Capture Screen -> Answer)");
+      [LIVE_CHORDS.screen]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.screen} (Capture Screen -> Answer)`);
         this.triggerAutopilotScreenCapture();
       },
-      "Alt+D": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+D (Re-answer Deeper)");
+      [LIVE_CHORDS.deeper]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.deeper} (Re-answer Deeper)`);
         this.dispatchLastAnswerAction('deep');
       },
-      "Alt+F": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+F (Re-answer Shorter)");
+      [LIVE_CHORDS.shorter]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.shorter} (Re-answer Shorter)`);
         this.dispatchLastAnswerAction('shorter');
       },
-      "Alt+C": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+C (Copy Code Block)");
+      [LIVE_CHORDS.copy]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.copy} (Copy Code Block)`);
         this.copyLastCodeBlock();
       },
-      "Alt+Down": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Down (Prompter Expand More)");
+      [LIVE_CHORDS.more]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.more} (Prompter Expand More)`);
         windowManager.broadcastToAllWindows("prompter:action", "toggle-more");
       },
-      "Alt+Up": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Up (Prompter Collapse Summary)");
+      [LIVE_CHORDS.less]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.less} (Prompter Collapse Summary)`);
         windowManager.broadcastToAllWindows("prompter:action", "close-more");
       },
-      "Alt+Left": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Left (Prompter Prev Answer)");
+      [LIVE_CHORDS.prev]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.prev} (Prompter Prev Answer)`);
         windowManager.broadcastToAllWindows("prompter:action", "prev");
       },
-      "Alt+Right": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+Right (Prompter Next Answer)");
+      [LIVE_CHORDS.next]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.next} (Prompter Next Answer)`);
         windowManager.broadcastToAllWindows("prompter:action", "next");
       },
-      "Alt+B": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+B (Toggle Blackout)");
+      [LIVE_CHORDS.blackout]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.blackout} (Toggle Blackout)`);
         windowManager.blackout(!windowManager.isBlackout);
       },
-      "Alt+1": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+1 (Opacity 30%)");
+      [LIVE_CHORDS.opacity30]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.opacity30} (Opacity 30%)`);
         windowManager.setGlobalOpacity(0.3);
       },
-      "Alt+2": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+2 (Opacity 60%)");
+      [LIVE_CHORDS.opacity60]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.opacity60} (Opacity 60%)`);
         windowManager.setGlobalOpacity(0.6);
       },
-      "Alt+3": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+3 (Opacity 100%)");
+      [LIVE_CHORDS.opacity100]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.opacity100} (Opacity 100%)`);
         windowManager.setGlobalOpacity(1.0);
       },
-      "Alt+W": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+W (Push-to-Ask Whisper)");
+      [LIVE_CHORDS.ask]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.ask} (Push-to-Ask Whisper)`);
         this.handlePushToAsk();
       },
-      "Alt+I": () => {
-        logger.info("[GLOBAL-HOTKEY] Triggered: Alt+I (Interview Mode Toggle)");
+      [LIVE_CHORDS.interview]: () => {
+        logger.info(`[GLOBAL-HOTKEY] Triggered: ${LIVE_CHORDS.interview} (Interview Mode Toggle)`);
         this.toggleInterviewMode();
       }
     };
 
+    const failed = [];
     Object.entries(shortcuts).forEach(([accelerator, handler]) => {
       let success = false;
       try {
@@ -521,18 +526,37 @@ class ApplicationController {
         logger.warn(`Failed initial registration for ${accelerator}`, { error: err.message });
       }
 
-      // Fallback for Alt+Space -> Alt+Q if system conflict
-      if (!success && accelerator === "Alt+Space") {
+      // Panic fallback if Ctrl+Alt+Space is claimed by the OS
+      if (!success && accelerator === LIVE_CHORDS.panic) {
         try {
-          success = globalShortcut.register("Alt+Q", handler);
+          success = globalShortcut.register(LIVE_CHORDS.panicFallback, handler);
           if (success) {
-            logger.info("Registered fallback Alt+Q for Panic Hide/Show (Alt+Space was occupied)");
+            logger.info(`Registered fallback ${LIVE_CHORDS.panicFallback} for Panic Hide/Show (${LIVE_CHORDS.panic} was occupied)`);
           }
         } catch (_) {}
       }
 
-      const isRegistered = globalShortcut.isRegistered(accelerator) || (accelerator === "Alt+Space" && globalShortcut.isRegistered("Alt+Q"));
+      const isRegistered = globalShortcut.isRegistered(accelerator) ||
+        (accelerator === LIVE_CHORDS.panic && globalShortcut.isRegistered(LIVE_CHORDS.panicFallback));
       logger.info("Global shortcut registered", { accelerator, success, isRegistered });
+      if (!success && !isRegistered) {
+        failed.push(accelerator);
+      }
+    });
+
+    this._failedShortcuts = failed;
+    if (failed.length) {
+      logger.warn("Some global shortcuts failed to register — surfacing in hub", { failed });
+      this.broadcastShortcutFailures();
+    }
+  }
+
+  broadcastShortcutFailures() {
+    const failed = this._failedShortcuts || [];
+    if (!failed.length) return;
+    windowManager.broadcastToAllWindows("shortcut-registration-failed", {
+      failed,
+      message: `Hotkey conflict: ${failed.join(', ')} did not register. Check the shortcuts panel.`
     });
   }
 
@@ -548,24 +572,12 @@ class ApplicationController {
         window.webContents.send("recording-stopped");
       });
 
-      // Auto-generate session note if session contains conversational turns
-      try {
-        const turns = sessionManager.getRecentTranscript(40);
-        if (turns && turns.length >= 2) {
-          const transcriptText = turns.map(t => `**[${(t.speaker || t.role).toUpperCase()}]**: ${t.content}`).join('\n\n');
-          const autoNote = {
-            id: `session-${Date.now()}`,
-            title: `Session ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
-            createdAt: new Date().toISOString(),
-            content: `## Conversation Record\n\n${transcriptText}\n\n### Summary\n- Automatically documented from ${turns.length} conversational turns.\n- Status: Completed.`,
-            tags: ['interview', 'auto-generated']
-          };
-          await notesService.save(autoNote);
-          logger.info('Auto-generated note saved for stopped session', { id: autoNote.id });
-        }
-      } catch (err) {
-        logger.warn('Failed to auto-save note on session stop', { error: err.message });
-      }
+      // Fire-and-forget: a slow or failed note write must never hang disarm.
+      setImmediate(() => {
+        this.scheduleSessionNote('recording-stopped').catch((err) => {
+          logger.warn('Failed to auto-save note on session stop', { error: err.message });
+        });
+      });
     });
 
     speechService.on("transcription", (text) => {
@@ -657,6 +669,7 @@ class ApplicationController {
     ipcMain.on("main-window-ready", () => {
       // Re-check availability whenever the main overlay finishes loading;
       // this covers first-run where the window was hidden during onboarding.
+      this.broadcastShortcutFailures();
       this.speechAvailable = speechService.isAvailable
         ? speechService.isAvailable()
         : false;
@@ -783,6 +796,10 @@ class ApplicationController {
 
     ipcMain.handle("get-latency-metrics", () => {
       return llmService.getLatencyMetrics();
+    });
+
+    ipcMain.handle("get-failed-shortcuts", () => {
+      return this._failedShortcuts || [];
     });
 
     ipcMain.handle("detach-panel", (event, name) => {
@@ -1648,6 +1665,20 @@ class ApplicationController {
       window.webContents.send("transcription-received", { text: fragment, speaker });
     });
 
+    // Push-to-ask bypasses both the Turn Aggregator and the Intent Gate so
+    // a whispered question is never merged into the interviewer's turn.
+    if (this._pushToAskArmed) {
+      this._pushToAskArmed = false;
+      this.lastSpokenQuestion = fragment;
+      this.processAutopilotAnswer(
+        { text: fragment, speaker: 'you', at: Date.now(), parts: 1 },
+        { act: 'answer', kind: 'question', conf: 1, needsScreen: false, why: 'push-to-ask' }
+      ).catch((err) => {
+        logger.warn('[AUTOPILOT] Push-to-ask failed', { error: err.message });
+      });
+      return;
+    }
+
     if (this.isAutopilotEnabled) {
       this.turnAggregator.push({
         text: fragment,
@@ -1765,7 +1796,10 @@ class ApplicationController {
     // Auto-capture frame if task or screen-referencing turn
     if (intent.needsScreen) {
       try {
-        const captureResult = await captureService.captureAndProcess({ autoROI: true });
+        const captureResult = await captureService.captureAndProcess({
+          autoROI: true,
+          displayId: windowManager.currentDisplay && windowManager.currentDisplay.id
+        });
         if (captureResult && !captureResult.isDuplicate && captureResult.imageBuffer) {
           capturedImageBuffer = captureResult.imageBuffer;
           mimeType = captureResult.mimeType || 'image/png';
@@ -1887,10 +1921,8 @@ class ApplicationController {
     let code = null;
     if (codeMatch) {
       code = codeMatch[1].trim();
-      const { clipboard } = require('electron');
-      if (clipboard) {
-        clipboard.writeText(code);
-      }
+      // Explicit copy only (Ctrl+Alt+C). Auto-clipboard is destructive
+      // and pasting a finished function in one keystroke is a visible tell.
     }
 
     const prose = fullResponse.replace(/```(?:[a-zA-Z0-9_-]+)?\s*[\s\S]*?```/g, '').trim();
@@ -1955,7 +1987,7 @@ class ApplicationController {
   }
 
   async triggerAutopilotScreenCapture() {
-    logger.info('[AUTOPILOT] Alt+S manual capture triggered');
+    logger.info(`[AUTOPILOT] ${LIVE_CHORDS.screen} manual capture triggered`);
     const prompterWin = windowManager.windows.get('prompter');
     if (prompterWin && !prompterWin.isDestroyed()) {
       prompterWin.webContents.send('prompter:stream-start', {
@@ -1965,7 +1997,10 @@ class ApplicationController {
     }
 
     try {
-      const captureResult = await captureService.captureAndProcess({ autoROI: true });
+      const captureResult = await captureService.captureAndProcess({
+        autoROI: true,
+        displayId: windowManager.currentDisplay && windowManager.currentDisplay.id
+      });
       if (!captureResult || !captureResult.imageBuffer) return;
 
       const result = await this.processVisionTurn(
@@ -2067,7 +2102,15 @@ class ApplicationController {
     // 4. Open notes panel for post-interview review
     windowManager.setActivePanel('notes');
 
-    // 5. Notify all windows
+    // 5. Compile session notes asynchronously — a large LLM call at the
+    // exact moment of wrapping up a call must not block or hang disarm.
+    setImmediate(() => {
+      this.scheduleSessionNote('interview-disarm').catch((err) => {
+        logger.warn('Auto-notes on disarm failed (non-blocking)', { error: err.message });
+      });
+    });
+
+    // 6. Notify all windows
     windowManager.broadcastToAllWindows('interview-mode-changed', { active: false, autopilot: false });
     logger.info('[INTERVIEW-MODE] Exited Interview Mode');
     return false;
@@ -2098,9 +2141,42 @@ class ApplicationController {
   }
 
   handlePushToAsk() {
-    logger.info('[AUTOPILOT] Alt+W Push-to-Ask triggered');
+    logger.info(`[AUTOPILOT] ${LIVE_CHORDS.ask} Push-to-Ask triggered`);
+    if (this.turnAggregator && typeof this.turnAggregator.flush === 'function') {
+      this.turnAggregator.flush();
+    }
+    this._pushToAskArmed = true;
     if (this.speechAvailable && !speechService.isRecording) {
       speechService.startRecording();
+    }
+  }
+
+  /**
+   * Compile and persist a session note without blocking the caller.
+   * Interview disarm and recording-stop must never wait on the LLM.
+   */
+  async scheduleSessionNote(reason) {
+    try {
+      const turns = sessionManager.getRecentTranscript
+        ? sessionManager.getRecentTranscript(40)
+        : [];
+      if (!turns || turns.length < 2) return null;
+      const transcriptText = turns
+        .map((t) => `**[${(t.speaker || t.role || 'them').toUpperCase()}]**: ${t.content}`)
+        .join('\n\n');
+      const autoNote = {
+        id: `session-${Date.now()}`,
+        title: `Session ${new Date().toLocaleDateString()} ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+        createdAt: Date.now(),
+        body: `## Conversation Record\n\n${transcriptText}\n\n### Summary\n- Automatically documented from ${turns.length} conversational turns (${reason}).\n- Status: Completed.`,
+        tags: ['interview', 'auto-generated', reason]
+      };
+      const saved = await notesService.save(autoNote);
+      logger.info('Session note saved', { reason, id: saved && saved.id });
+      return saved;
+    } catch (err) {
+      logger.warn('scheduleSessionNote failed', { reason, error: err.message });
+      return null;
     }
   }
 

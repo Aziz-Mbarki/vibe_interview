@@ -183,7 +183,7 @@ class ChatWindowUI {
         // Microphone button
         this.elements.micButton.addEventListener('click', async () => {
             if (!this.isInteractive) {
-                this.addMessage('Window is in non-interactive mode. Press Alt+A to enable interaction.', 'error');
+                this.addMessage('Window is in non-interactive mode. Press Ctrl+Shift+I to enable interaction.', 'error');
                 return;
             }
             

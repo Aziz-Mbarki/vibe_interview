@@ -175,7 +175,7 @@
 
     /* Expandable Detail View */
     .p-detail {
-      display: none;
+      display: flex;
       position: absolute;
       top: 0;
       left: 0;
@@ -188,9 +188,13 @@
       z-index: 10;
       flex-direction: column;
       gap: 8px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease;
     }
     .p-detail.open {
-      display: flex;
+      opacity: 1;
+      pointer-events: auto;
     }
     .p-detail-head {
       display: flex;
@@ -269,7 +273,7 @@
         </div>
         <div class="pf-right">
           <span id="pager">1/1</span>
-          <span class="more-hint" id="moreHint">Alt+↓ more</span>
+          <span class="more-hint" id="moreHint">Ctrl+Alt+↓ more</span>
         </div>
       </div>
     </div>
@@ -278,19 +282,19 @@
     <div class="p-detail" id="pDetail">
       <div class="p-detail-head">
         <span id="detailTitle">Full Detail</span>
-        <span style="font-size: 10px; color: var(--text-3);">Alt+↑ to return</span>
+        <span style="font-size: 10px; color: var(--text-3);">Ctrl+Alt+↑ to return</span>
       </div>
       <div class="p-detail-content" id="detailContent"></div>
     </div>
 
     <!-- Alt-hold Cheat-Sheet Hint Bar -->
     <div class="hint-bar" id="hintBar" hidden>
-      <span><kbd>Alt+Space</kbd> Panic Hide</span>
-      <span><kbd>Alt+S</kbd> Screen</span>
-      <span><kbd>Alt+D</kbd> Deeper</span>
-      <span><kbd>Alt+F</kbd> Shorter</span>
-      <span><kbd>Alt+C</kbd> Copy</span>
-      <span><kbd>Alt+1..3</kbd> Opacity</span>
+      <span><kbd>Ctrl+Alt+Space</kbd> Panic</span>
+      <span><kbd>Ctrl+Alt+S</kbd> Screen</span>
+      <span><kbd>Ctrl+Alt+D</kbd> Deeper</span>
+      <span><kbd>Ctrl+Alt+F</kbd> Shorter</span>
+      <span><kbd>Ctrl+Alt+C</kbd> Copy</span>
+      <span><kbd>Ctrl+Alt+1..3</kbd> Opacity</span>
     </div>
   </div>
 
@@ -308,7 +312,7 @@
       const detailContent = document.getElementById('detailContent');
       const hintBar = document.getElementById('hintBar');
 
-      // History buffer for Alt+Left / Alt+Right navigation
+      // History buffer for Ctrl+Alt+Left / Ctrl+Alt+Right navigation
       const history = [];
       let historyIndex = -1;
       let isDetailOpen = false;
@@ -453,8 +457,8 @@
             headline: 'No problem detected',
             bullets: [
               'No clear coding question or stack trace found.',
-              'Alt+S to capture screen again.',
-              'Alt+W to whisper a direct question.'
+              'Ctrl+Alt+S to capture screen again.',
+              'Ctrl+Alt+W to whisper a direct question.'
             ]
           });
         });
@@ -475,12 +479,11 @@
           if (action === 'toggle-more') {
             isDetailOpen = !isDetailOpen;
             pDetail.classList.toggle('open', isDetailOpen);
-            // Request window resize if needed via IPC
-            window.electronAPI.resizeWindow?.(720, isDetailOpen ? 320 : 150);
+            // Detail drawer overlays in-place. Never resize the window —
+            // a strip that grows on every answer draws the eye.
           } else if (action === 'close-more') {
             isDetailOpen = false;
-            pDetail.classList.remove('open', false);
-            window.electronAPI.resizeWindow?.(720, 150);
+            pDetail.classList.remove('open');
           } else if (action === 'prev') {
             if (historyIndex > 0) {
               historyIndex--;

@@ -69,7 +69,9 @@ class CaptureService {
         const rawCropBitmap = finalImage.toBitmap();
         const cropSize = finalImage.getSize();
         dHash = roiService.computeDHash(rawCropBitmap, cropSize.width, cropSize.height, 4);
-        isDuplicate = roiService.isDuplicateFrame(dHash);
+        // Text-heavy screens: threshold 2 (not 6). A missed capture of a
+        // newly added constraint is far more costly than a duplicate call.
+        isDuplicate = roiService.isDuplicateFrame(dHash, roiService.TEXT_DHASH_THRESHOLD || 2);
       } catch (e) {
         logger.warn('dHash computation failed', { error: e.message });
       }

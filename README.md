@@ -163,9 +163,14 @@ OpenCluely adapts its responses to the specific interview round via intelligent 
 | Cycle answer style | `Cmd/Ctrl + Shift + Y` | Switch style (concise, structured, spoken, deep) |
 | Copy last code block | `Cmd/Ctrl + Shift + G` | Copy first/largest code block to clipboard |
 | Re-run last as... | `Cmd/Ctrl + Shift + E` | Open overlay menu to re-run last input with another skill |
-| Toggle speech | `Alt + R` | Start or stop push-to-talk voice recognition |
+| Toggle speech | `Ctrl + Alt + R` | Start or stop push-to-talk voice recognition |
 | Toggle visibility | `Cmd/Ctrl + Shift + V` | Show or hide all windows |
-| Toggle interaction | `Cmd/Ctrl + Shift + I` or `Alt + A` | Enable or disable click through |
+| Toggle interaction | `Cmd/Ctrl + Shift + I` | Enable or disable click through |
+| Interview mode | `Ctrl + Alt + I` | Open the prompter strip and start listening |
+| Panic hide | `Ctrl + Alt + Space` | Hide every overlay immediately |
+| Capture screen (live) | `Ctrl + Alt + S` | Capture and auto-crop the problem region |
+| Copy last code | `Ctrl + Alt + C` | Copy the last code block (never automatic) |
+| Push-to-ask | `Ctrl + Alt + W` | Whisper a question that bypasses the aggregator |
 | Open chat | `Cmd/Ctrl + Shift + C` | Open the interactive chat window |
 | Settings | `Cmd/Ctrl + ,` | Open the settings panel |
 

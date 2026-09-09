@@ -990,11 +990,25 @@ class WindowManager {
     }
   }
 
+  /**
+   * Prefer the display under the cursor (the one the candidate is looking at)
+   * rather than always the primary display.
+   */
+  anchorToCursorDisplay() {
+    try {
+      const cursor = screen.getCursorScreenPoint();
+      if (cursor && typeof cursor.x === 'number' && Math.abs(cursor.x) < 50000) {
+        this.currentDisplay = screen.getDisplayNearestPoint(cursor);
+      }
+    } catch (_) {}
+  }
+
   async showPrompter() {
     let w = this.windows.get('prompter');
     if (!w || w.isDestroyed()) {
       w = await this.createPrompterWindow();
     }
+    this.anchorToCursorDisplay();
     this.positionWindow(w, 'prompter');
     this.showOnCurrentDesktop(w);
     return w;

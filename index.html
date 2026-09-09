@@ -358,6 +358,42 @@
         pointer-events: auto !important;
       }
 
+      .shortcut-warn {
+        display: none;
+        align-items: center;
+        gap: 6px;
+        height: 26px;
+        padding: 0 10px;
+        border-radius: 999px;
+        background: rgba(245, 158, 11, 0.18);
+        border: 1px solid rgba(245, 158, 11, 0.45);
+        color: #fbbf24;
+        font: 600 11px/1 system-ui, sans-serif;
+        -webkit-app-region: no-drag;
+        cursor: pointer;
+        white-space: nowrap;
+        max-width: 220px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+      }
+      .shortcut-warn.is-visible {
+        display: inline-flex;
+      }
+      .shortcuts-warn-banner {
+        display: none;
+        margin: 0 0 8px 0;
+        padding: 8px 10px;
+        border-radius: 8px;
+        background: rgba(245, 158, 11, 0.15);
+        border: 1px solid rgba(245, 158, 11, 0.35);
+        color: #fbbf24;
+        font-size: 11px;
+        line-height: 1.4;
+      }
+      .shortcuts-warn-banner.is-visible {
+        display: block;
+      }
+
       .interview-chip,
       .interview-chip * {
         -webkit-app-region: no-drag !important;
@@ -366,10 +402,10 @@
   </head>
   <body>
     <div class="hub" id="hub">
-      <span class="hub-dot non-interactive" id="statusDot" title="Interaction state (Alt+A to toggle)"></span>
+      <span class="hub-dot non-interactive" id="statusDot" title="Interaction state (Ctrl+Alt+A to toggle)"></span>
 
       <nav class="hub-tabs" role="tablist">
-        <button class="hub-tab" data-panel="listen" role="tab" id="tabListen" aria-selected="false" title="Listen (Alt+R)">
+        <button class="hub-tab" data-panel="listen" role="tab" id="tabListen" aria-selected="false" title="Listen (Ctrl+Alt+R)">
           <i class="fas fa-microphone-lines"></i><span>Listen</span>
           <span class="hub-live" id="listenLiveDot" hidden></span>
         </button>
@@ -389,7 +425,7 @@
 
       <span class="hub-sep"></span>
       <div class="hub-actions" style="-webkit-app-region: no-drag !important; pointer-events: auto !important;">
-        <button class="interview-chip" id="interviewChip" type="button" title="Interview Mode (Alt+I)" style="-webkit-app-region: no-drag !important; pointer-events: auto !important; cursor: pointer !important;">
+        <button class="interview-chip" id="interviewChip" type="button" title="Interview Mode (Ctrl+Alt+I)" style="-webkit-app-region: no-drag !important; pointer-events: auto !important; cursor: pointer !important;">
           <i class="fas fa-bolt" style="-webkit-app-region: no-drag !important;"></i>
           <span class="dot" style="-webkit-app-region: no-drag !important;"></span>
           <span class="label" style="-webkit-app-region: no-drag !important;">Interview</span>
@@ -399,6 +435,7 @@
           <b id="quotaTotal">5h</b><i>|</i><span id="quotaPct">0%</span><i>|</i>
           <span id="quotaRest">rest 4h55m</span>
         </div>
+        <button class="shortcut-warn" id="shortcutWarn" title="One or more hotkeys failed to register" hidden>⚠ hotkey conflict</button>
         <button class="hub-icon" id="hubMore" title="Global Shortcuts" style="-webkit-app-region: no-drag !important;"><i class="fas fa-ellipsis"></i></button>
       </div>
 
@@ -412,6 +449,7 @@
       <div class="shortcuts-title">
         <i class="fas fa-bolt"></i> Global Shortcuts
       </div>
+      <div id="shortcutsWarnBanner" class="shortcuts-warn-banner"></div>
       <table class="shortcuts-table">
         <thead>
           <tr>
@@ -422,59 +460,67 @@
         <tbody>
           <tr style="background: rgba(16, 185, 129, 0.08);">
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">I</span>
             </td>
             <td><b>Interview Mode</b> (prompter, speech, notes)</td>
           </tr>
           <tr style="background: rgba(239, 68, 68, 0.08);">
             <td>
-              <span class="kbd">Alt</span>
-              + <span class="kbd">Space</span> / <span class="kbd">Alt</span> + <span class="kbd">Q</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
+              + <span class="kbd">Space</span> / <span class="kbd">Q</span>
             </td>
-            <td><b>Panic Hide</b> (&lt;16ms stealth toggle)</td>
+            <td><b>Panic Hide</b></td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">A</span>
             </td>
-            <td>Toggle Autopilot / Click-through</td>
+            <td>Toggle Autopilot</td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">S</span>
             </td>
             <td>Capture screen &amp; auto-crop problem</td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
-              + <span class="kbd">D</span> / <span class="kbd">Alt</span> + <span class="kbd">F</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
+              + <span class="kbd">D</span> / <span class="kbd">F</span>
             </td>
             <td>Deeper dive / Shorter bullet</td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">C</span>
             </td>
-            <td>Copy last code / headline</td>
+            <td>Copy last code (explicit — never auto)</td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">W</span>
             </td>
             <td>Push-to-Ask (whisper prompt)</td>
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">1</span> / <span class="kbd">2</span> / <span class="kbd">3</span>
             </td>
-            <td>Opacity levels (25% / 60% / 100%)</td>
+            <td>Opacity levels (30% / 60% / 100%)</td>
           </tr>
           <tr>
             <td>
@@ -497,9 +543,6 @@
               <span class="kbd">Ctrl/Cmd</span>
               + <span class="kbd">Shift</span>
               + <span class="kbd">I</span>
-              <span style="opacity:.7; margin:0 4px;">or</span>
-              <span class="kbd">Alt</span>
-              + <span class="kbd">A</span>
             </td>
             <td>Toggle interaction (click-through)</td>
           </tr>
@@ -513,7 +556,8 @@
           </tr>
           <tr>
             <td>
-              <span class="kbd">Alt</span>
+              <span class="kbd">Ctrl</span>
+              + <span class="kbd">Alt</span>
               + <span class="kbd">R</span>
             </td>
             <td>Toggle speech</td>
@@ -576,7 +620,7 @@
         </tbody>
       </table>
       <div class="shortcuts-footer">
-        <span>Tip: Alt+A also toggles interaction from anywhere.</span>
+        <span>Tip: live chords are Ctrl+Alt so they don't steal browser/OS keys.</span>
         <a href="https://techycsr.dev" target="_blank" rel="noreferrer noopener">Made by @TechyCSR</a>
       </div>
     </div>

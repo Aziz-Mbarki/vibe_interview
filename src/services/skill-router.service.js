@@ -58,26 +58,26 @@ const PRESET_SKILLS = {
 
 const LLM_ACTION_PROMPTS = {
   // Universal
-  'copy-code': 'Extract ONLY the final, complete, runnable code block from the previous solution. No explanation, no commentary, just the code block with appropriate language tag.',
-  'copy-all': 'Output the complete previous solution formatted cleanly and directly for the candidate.',
-  'shorter': 'Rewrite the previous answer to be 50% more concise. Retain only the most crucial points, code, and complexities. Strip all non-essential words.',
-  'example': 'Provide a concrete, step-by-step example with input/output dry run or trace for the previous solution.',
-  'follow-up': 'Prepare the next logical follow-up answer or variation for this problem that interviewers commonly ask.',
+  'copy-code': 'Extract ONLY the final, complete, runnable code block from the previous solution. No explanation, no commentary, just the fenced code with the correct language tag. Do not invent or "improve" APIs.',
+  'copy-all': 'Output the complete previous solution formatted cleanly and directly for the candidate. Keep every load-bearing fact. Do not invent new claims.',
+  'shorter': 'Rewrite the previous answer more concisely. Keep the verdict, the code, true complexity, and any edge case that makes it correct. Never drop a load-bearing fact for brevity. No invented metrics.',
+  'example': 'Provide a concrete, step-by-step dry run of the PREVIOUS solution with a short input. Trace must match that code. State input, each mutation, and output.',
+  'follow-up': 'Answer the most common interviewer follow-up for this problem (complexity, alternative, scaling, or "what if n is huge"). Give the correct answer in first person. Never ask a question back.',
   // DSA
-  'dry-run': 'Provide an explicit variable-by-variable dry-run trace of the algorithm using a short sample test case.',
-  'optimize': 'Can this solution be further optimized in time complexity, space complexity, or cache locality? Show the optimized version.',
-  'other-approach': 'Provide an alternative algorithmic approach (e.g., iterative instead of recursive, two pointers instead of hash map) and compare trade-offs.',
+  'dry-run': 'Dry-run the PREVIOUS algorithm on a short sample. Variable-by-variable. The trace must match the code already given. Include the empty or n=1 case if it is interesting.',
+  'optimize': 'If a strictly better time or space solution exists, give it complete and compiling, with true complexity. If the current solution is already optimal, say so in one line and keep it. Do not claim a better Big-O you cannot implement.',
+  'other-approach': 'Give one real alternative (e.g. iterative vs recursive, two pointers vs hash map). Complete enough to implement. Honest trade-offs. Do not invent a worse "clever" trick.',
   // System Design
-  'api-detail': 'Detail the REST/gRPC API payloads, parameters, status codes, and error models for this system.',
-  'scale-it': 'Walk through scaling this system from 10,000 to 10,000,000 daily active users. Address database sharding, caching layers, and bottlenecks.',
-  'trade-offs': 'Provide a focused trade-offs analysis comparing database choices (SQL vs NoSQL), consistency models (CAP/PACELC), and message queue architectures.',
+  'api-detail': 'Detail REST/gRPC endpoints, payloads, status codes, and error models that match the previous design. Do not invent fields that contradict it. Keep numbers internally consistent.',
+  'scale-it': 'Scale the previous design from 10k to 10M DAU. Arithmetic must check out (QPS, storage, bandwidth). Name the real bottleneck at each jump. Do not invent capacity numbers that contradict earlier math.',
+  'trade-offs': 'Compare the actual choices in the previous design (SQL vs NoSQL, consistency, queue). Honest when each wins. No buzzword dump. First person.',
   // Behavioral
-  'star-ify': 'Reformat the previous story strictly into STAR format (Situation, Task, Action, Result) with measurable metrics.',
-  '60-sec-version': 'Condense this into an exact 60-second spoken elevator pitch (~120 words) with maximum impact.',
-  'add-metrics': 'Enhance this answer with realistic quantifiable engineering metrics (e.g. latency % drop, QPS handled, team size, delivery timeline).',
+  'star-ify': 'Reformat the previous story into STAR (Situation, Task, Action, Result). Use only facts already given or the candidate profile. Never invent employers, titles, or metrics — use {insert metric} if missing.',
+  '60-sec-version': 'Condense into a ~60-second first-person pitch (~120 words). Keep the true result. Do not invent numbers. Do not ask a question back.',
+  'add-metrics': 'Add metrics ONLY if they already appear in the previous answer or candidate profile. If a needed number is missing, write {insert metric} — never invent a percentage, QPS, or headcount.',
   // Tech Q&A / Debug
-  'root-cause': 'Identify the exact root cause of the error or concept in 1-2 lines.',
-  'fix-only': 'Provide ONLY the exact code/configuration fix needed to resolve this error with no background preamble.'
+  'root-cause': 'Name the exact root cause in 1-2 lines. Then the one-line fix. Do not guess a trendy cause that the stack trace does not support.',
+  'fix-only': 'Provide ONLY the exact code or config change that fixes this error. Complete enough to paste. No preamble. Do not invent APIs that do not exist.'
 };
 
 class SkillRouterService {

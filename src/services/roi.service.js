@@ -204,19 +204,24 @@ class ROIService {
 
   /**
    * Check if current frame is a duplicate of the previous frame.
-   * If Hamming distance < 6, considers frame duplicate.
-   * Updates internal lastHash when a non-duplicate is received.
+   *
+   * Hamming < 6 is a reasonable "same photo" threshold and a bad "same
+   * code" threshold: scrolling one line, a blinking cursor, or a linter
+   * squiggle can land under 6 bits and silently skip the capture that
+   * mattered. Bias toward sending — missed capture costs more than a
+   * duplicate API call. Default is 2 for text-heavy regions.
+   *
    * @param {string} currentHash
-   * @param {number} [threshold=6]
+   * @param {number} [threshold=2]
    * @returns {boolean} true if duplicate
    */
-  isDuplicateFrame(currentHash, threshold = 6) {
+  isDuplicateFrame(currentHash, threshold = 2) {
     if (!this.lastHash) {
       this.lastHash = currentHash;
       return false;
     }
     const dist = this.hammingDistance(this.lastHash, currentHash);
-    if (dist < threshold) {
+    if (dist <= threshold) {
       return true;
     }
     this.lastHash = currentHash;
@@ -228,4 +233,6 @@ class ROIService {
   }
 }
 
-module.exports = new ROIService();
+const roiService = new ROIService();
+roiService.TEXT_DHASH_THRESHOLD = 2;
+module.exports = roiService;

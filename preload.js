@@ -32,6 +32,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   setInterviewMode: (enabled) => ipcRenderer.invoke('set-interview-mode', enabled),
   toggleAutopilot: (enabled) => ipcRenderer.invoke('toggle-autopilot', enabled),
   getLatencyMetrics: () => ipcRenderer.invoke('get-latency-metrics'),
+  getFailedShortcuts: () => ipcRenderer.invoke('get-failed-shortcuts'),
+  onShortcutRegistrationFailed: (callback) => {
+    const sub = (_e, val) => callback(val);
+    ipcRenderer.on('shortcut-registration-failed', sub);
+    return () => ipcRenderer.removeListener('shortcut-registration-failed', sub);
+  },
   onInterviewModeChanged: (callback) => {
     const sub = (_e, val) => callback(val);
     ipcRenderer.on('interview-mode-changed', sub);
